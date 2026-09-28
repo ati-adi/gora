@@ -1,0 +1,19 @@
+# Keep secrets, local state and bulky folders out of the Docker build context (the COPYs are explicit anyway).
+.env
+.env.*
+!.env.example
+node_modules
+data
+keys
+backups
+dist
+coverage
+*.db
+*.db-*
+*.lock
+*.log
+.DS_Store
+.vite
+docs
+test
+.git

@@ -1,0 +1,12 @@
+# WP7b progress
+- started; read handbook 04. Next: read spec 01 §4, §10.1-10.2, §6 business tools, 02/03 deltas, contracts business.ts.
+- (restart 2) read 04, F12, §10.1-10.2, DDL, §6 business tools rows, §7.2, §11.9, §15.2 business row. Next: read contracts (services, trust, tools, agent, telegram, storage, scheduler, i18n) then write repo.ts
+- (restart 2) PLAN: files core.ts(ref parse, Biz ctx), text.ts(en/ru), repo.ts(SQL business_*), connection.ts, consent.ts(setChatAi/per-chat card/bz cb), pipeline.ts(onMessage/onDeleted), triage.ts(job+digest), drafting.ts(startDraft/noteNoDraft/draft pa lookup), send.ts(sendReply, window job, copy fallback), index.ts, tools.ts. Refs: chat 'bc:<conn>:<chat>' (also accept '<conn>:<chat>' from WP4 sentinel); sourceRefs 'bizchat:<conn>:<chat>' + 'bizmsg:<conn>:<chat>:<id>' per id (voidBySourceRef is exact match). Window-closed card: WP4 owns card edit -> void + follow-up copy message (deviation). Tone notes via Mini App web_app button.
+- written: core.ts text.ts repo.ts drafting.ts digest.ts triage.ts send.ts. Next: consent.ts, connection.ts, pipeline.ts, index.ts, tools.ts, then typecheck, then tests
+- all src files written, tsc clean for src/surfaces/business. Next: run importRules/foundation tests, then write test/unit/surfaces/business*.test.ts and test/e2e/business.e2e.test.ts
+- smoke verified full flow (consent card, metadata, triage→draft card in Inbox) with real stack. Next: write test/unit/surfaces/business.test.ts, business.tools.test.ts, test/e2e/business.e2e.test.ts
+- wrote test/unit/surfaces/business.test.ts; iterating to green
+- business.test.ts 24/24 green. Next: business.tools.test.ts, then e2e
+- business.tools.test.ts 5/5 green. Next: test/e2e/business.e2e.test.ts
+- e2e 5/5 green. Running gate.
+- DONE: gate green (tsc clean for my paths; unit 29 + e2e 5; importRules green). Full unit: only 5 WP0 stub-era foundation tests fail (not WP7b-specific).

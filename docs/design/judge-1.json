@@ -1,0 +1,67 @@
+{
+ "scores": [
+  {
+   "key": "trust-agent",
+   "user_value": 8.5,
+   "differentiation": 8,
+   "feasibility": 6,
+   "technical_correctness": 8.5,
+   "trust": 9.5,
+   "notes": "The strongest agent core. An approval returns a non-error pending_approval result immediately, so chat never blocks, and approved actions run from a stored, sha256-checked payload with no model call in between. Only task_wait parks a run. Side effects are made safe by the tool_use_id idempotency key, reconcile() and a two-phase Gmail draft\u2192send. It is also the only proposal with rule S10, which always asks when a recipient came from untrusted content, even if an 'always' grant exists. It is also the only one that strips model-emitted <tg-button>, login_url and web_app tags and fake card headers. That matters because Rich Markdown can render real callback and url buttons, so injected text could otherwise produce phishing buttons. Forgetting is real: epoch rotation plus a per-user DEK in a separate keys.db, which satisfies ToS 4.4a. Before consent, business chats keep only metadata, which matches ToS 5.4(iv). Claude API usage is correct throughout: one beta stream, fallbacks 'default' with the -07-01 header, 1h/1h cache ordering, role:'system' context after the user turn, pause_turn and refusal handling, the echo transform, and a <\\system-reminder> fallback. Weak spots: (1) place_verify, a custom tool, is described as using web_fetch, which is an Anthropic server tool the tool's code cannot call. (2) The long-lived biz:<bc>:<chat> conversation keeps peer text in append-only rows, so deleted_business_messages can't fully purge it. (3) It assumes \ud83d\udc4e message_reaction arrives in private chats. Groups and inline mode are deferred. The scope is still large: missions, watchers, secretary, Composio and the Mini App."
+  },
+  {
+   "key": "telegram-native",
+   "user_value": 9,
+   "differentiation": 9.5,
+   "feasibility": 4.5,
+   "technical_correctness": 8,
+   "trust": 8.5,
+   "notes": "Makes the richest use of Bot API 9.3\u201310.3. Topic icon colors are valid (9367192, 0xFFD67E, 0x6FB9F0) and it correctly notes that icon_color can't be edited and closeForumTopic is supergroup-only. It covers guest mode with a single answerGuestQuery plus an inline edit and a DM fallback, and an inline toolbox answered from SQLite with switch_inline_query_chosen_chat. The ephemeral /catchup uses is_ephemeral and respects the 15 s rule. Secretary Mode uses <tg-time format='r'> to count down the reply window and switches to copy_text after 24 h. sendChecklist is correctly limited to business connections. Stars and web_app keyboard caveats are right. Two clever cost designs: a handoff fork run while the cache is still warm (its $1 cold re-warm math checks out), and single-shot business drafting segments so peer deletions can be honored. The main problem is feasibility: 17 v1 surfaces plus 11 Mini App pages, three frozen toolsets, geofences, TTS, reader mode and inline. Trust gaps compared with trust-agent: (1) no check on where a recipient came from, only a blanket taint rule. (2) It stores business messages encrypted even for chats without AI consent, which goes against data minimization. (3) Per-fact forget leaves the text in the append-only transcript until the segment rotates or the conversation is wiped. Smaller issues: (1) video_note audio is sent through the voice.ogg path. (2) The Anna checklist story depends on business mode and the 24 h can_reply window. (3) Editing an ephemeral message after 15 s as a non-admin is undocumented."
+  },
+  {
+   "key": "pragmatic-mvp",
+   "user_value": 7,
+   "differentiation": 6.5,
+   "feasibility": 7.5,
+   "technical_correctness": 6.5,
+   "trust": 7.5,
+   "notes": "Has the most shippable scope: no OAuth and no business mode in v1, with contracts, harness and golden end-to-end tests defined up front. Several details are good: burst coalescing, a consent card at /start, quota replies from templates with no LLM call, ch.checkpoint() before parking so streamed text isn't lost when the draft disappears, degrading from rich to plain drafts on a 400, and typed Scope objects that can never come from tool input. It correctly skips @grammyjs/stream, runner and the MCP connector, with reasons given. It has the most concrete API errors. (1) An episode starts with a <previous-episode> role:'system' row, but a mid-conversation system message can't be messages[0], and the design's own grammar also forbids it. (2) It wants a guest web_search cap of 3 while tools are frozen and identical at max_uses 8. Server tools can't be limited by policy, and changing max_uses breaks the shared prefix. (3) Every voice, video_note (MP4) and audio file is uploaded as voice.ogg with audio/ogg. (4) The rollover side-call disables thinking, which returns 400 on claude-opus-5-5. (5) It adds the files beta header per conversation even though the Files API is GA. (6) It spaces DM messages 350 ms apart, faster than Telegram's 1 msg/s per chat guidance. It gives up the two strongest differentiators, Gmail/Calendar and Secretary Mode, so it does worse on GAP #1 and #5. Forget doesn't remove the fact from the active episode's replayed context."
+  }
+ ],
+ "winner": "trust-agent",
+ "best_ideas_to_graft": [
+  "From telegram-native: make business drafting runs single-shot segments (SYSTEM + BIZ toolset + one untrusted user row) instead of a long-lived biz:<bc>:<chat> transcript. This lets deleted_business_messages and the 30-day retention actually purge peer text.",
+  "From telegram-native: fork a handoff while the cache is still warm (~45 min after the last request, same prefix, one extra non-persisted user row asking for a handoff note), and use it as the seed when trust-agent rotates an epoch. This avoids paying ~$1 to cold re-write a 100k-token history.",
+  "From telegram-native: add an inline-mode toolbox answered only from SQLite (free slots from calendar_cache, open tasks, prepared drafts as InputRichMessageContent, is_personal, cache_time 0). Add switch_inline_query_chosen_chat buttons to carry DM drafts into any chat, and savePreparedInlineMessage plus shareMessage from the Mini App.",
+  "From telegram-native: create fixed lazy topics, \ud83d\udce5 Inbox (0xFFD67E) for secretary cards and \u2600\ufe0f Today (0x6FB9F0) for briefs and nudges. Show status with editForumTopic name prefixes (\u23f3/\u23f8/\u2705), and name topics the user created (is_name_implicit) with a side call.",
+  "From telegram-native: guest 'private spill-over'. The public answer only says it checked privately, and the real answer goes to the caller's DM as an event run. Enforce this with a canary-fact test that private strings never appear in guest or group wire requests.",
+  "From telegram-native: a write_self action class that runs immediately with a 10-minute Undo instead of an approval card, to cut approval fatigue. Also ack turns that only touch memory or reminders with a \u270d/\ud83d\udc4c reaction instead of text, keeping buttons as the fallback because private-chat message_reaction delivery is uncertain.",
+  "From telegram-native: on business approval cards, count down the 24 h window with <tg-time format='r'>. After it expires, switch the card to a copy_text button.",
+  "From telegram-native: group /catchup as an is_ephemeral command answered with ephemeral_message_parameters inside the 15 s window, falling back to the DM. Also private per-member approvals inside groups.",
+  "From telegram-native: a biometric step-up (BiometricManager.updateBiometricToken/authenticate, server-side hash comparison) before granting 'Always' for any send_external action.",
+  "From pragmatic-mvp: debounce message bursts (~700 ms) into one user turn, and call ch.checkpoint() to persist the streamed text as a real message before a run parks, since the draft disappears after 30 s.",
+  "From pragmatic-mvp: an explicit memory-consent card at /start ([Remember] / [Incognito]) with a <details> list of processors and retention, sent before any fact is written.",
+  "From pragmatic-mvp: when a quota is exhausted, reply from a template with exact counts and the reset time, with no LLM call.",
+  "From pragmatic-mvp: make_file as an isolated code_execution sub-call. Download outputs through the stable Files API, pass names through path.basename, and send with sendDocument/sendPhoto, so users get real xlsx/pdf/png files back.",
+  "From pragmatic-mvp: a wire-snapshot test that pins the exact request JSON. All SDK casts (the scalar fallbacks 'default', clear_at, role:'system' on the beta client) live in a single llm.ts file.",
+  "From pragmatic-mvp: a rich-draft hygiene pass that closes unbalanced code fences and $$ blocks mid-stream. On the first 400 from a rich draft, switch the rest of that run to plain drafts."
+ ],
+ "technical_errors_found": [
+  "pragmatic-mvp: a new episode starts with a '<previous-episode>' role:'system' row. Mid-conversation system messages cannot be messages[0] and must follow a user message, so this returns 400. It also contradicts the proposal's own HistoryWriter rule that messages[0] is a user row. The summary should be text inside the first user row.",
+  "pragmatic-mvp: it proposes a guest web_search cap of 3 while TOOLS is frozen and identical across routes with max_uses 8. web_search_20260209 runs on Anthropic's servers, so Gora's policy layer can't limit it. The only lever is max_uses in the tool definition, and changing that per route breaks the shared cache prefix.",
+  "pragmatic-mvp (and telegram-native for video_note): every voice, video_note and audio file is uploaded as 'voice.ogg' with audio/ogg. The .oga\u2192.ogg rename only applies to Ogg/Opus voice notes. Video notes are MP4 and audio files are MP3/M4A, so they need matching filenames and MIME types (Groq accepts mp4, mp3 and m4a).",
+  "pragmatic-mvp: the episode-rollover side-call sets thinking disabled. claude-opus-5-5 returns 400 for thinking.type 'disabled', which contradicts the claim that moving to 5.5 is only a config change.",
+  "pragmatic-mvp: it adds the files-api-2025-04-14 beta header only for conversations that contain large PDFs. The Files API is GA, and the beta header returns the old response shapes. Changing betas mid-conversation also contradicts the conversation's frozen betas column.",
+  "pragmatic-mvp: private-chat outbound spacing of 350 ms (~3 msg/s) goes beyond the Telegram FAQ guidance of about 1 msg/s per chat, so 429s are likely.",
+  "pragmatic-mvp: it uses client.beta.messages.parse for structured side calls. The documented helper is client.messages.parse with zodOutputFormat from '@anthropic-ai/sdk/helpers/zod'. The beta variant is unverified.",
+  "pragmatic-mvp: it starts each run with plain sendMessageDraft and then switches to sendRichMessageDraft on the same draft_id. Mixing draft types under one draft_id is undocumented and may not animate, or may fail.",
+  "trust-agent: place_verify is a custom client-side tool, yet it claims to use 'web_fetch of the official site'. web_fetch_20260209 is an Anthropic server tool that only the model can invoke, so the tool's code has to use Gora's own SentinelFetch.",
+  "trust-agent: business drafting runs in a long-lived biz:<bc>:<chat> conversation whose messages rows are append-only. 'deleted_business_messages deletes stored content' can't remove peer text that has already been replayed into transcript rows unless the epoch is shredded, so the ToS deletion promise is inconsistent with the design.",
+  "trust-agent: it treats a \ud83d\udc4e message_reaction in the DM as nudge feedback without noting the dossier caveat that message_reaction may require admin rights, so private-chat delivery is uncertain.",
+  "telegram-native / pragmatic-mvp: both assume a non-admin bot can call editEphemeralMessageText on a /catchup placeholder after the 15 s ephemeral window. Edit windows for ephemeral messages are undocumented.",
+  "telegram-native: the story 'send Anna a native checklist' depends on sendChecklist, which exists only via business_connection_id and is limited by can_reply's 24 h incoming-message window. It can't be sent to Anna unprompted.",
+  "telegram-native: business_message content is stored encrypted for every connected chat, including chats where the owner never enabled AI. Data minimization (ToS 4.2/5.4(ii)) calls for metadata only until consent, which is trust-agent's approach.",
+  "telegram-native / pragmatic-mvp: per-fact forget tombstones or crypto-shreds the memory row, but the fact text stays in the append-only transcript and in the replayed Claude context until the segment or episode rotates. Forget should trigger rotation, as trust-agent's does.",
+  "telegram-native / trust-agent: the biometric step-up is described as 'verified server-side'. The server only verifies that the client holds a token saved with BiometricManager.updateBiometricToken, which proves device possession through an unmodified client, not a biometric check."
+ ]
+}

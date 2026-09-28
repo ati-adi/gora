@@ -1,0 +1,64 @@
+{
+ "scores": [
+  {
+   "key": "telegram-native",
+   "user_value": 9,
+   "differentiation": 9.5,
+   "feasibility": 5,
+   "technical_correctness": 8,
+   "trust": 8.5,
+   "notes": "This is the only proposal that feels like 'Muse, but it lives in Telegram' rather than a chatbot with a Telegram skin. It uses Secretary/Chat Automation for triage and promise tracking, which is the one thing Muse, Mira and folk cannot see. It also has per-task private topics, an @gora guest mode that keeps private data out of public chats, an inline toolbox that inserts your own data into any chat, ephemeral /catchup in groups, native checklists, location and reactions. The approval cards with Undo, a trust ladder and batched digests address Muse's approval fatigue directly. The segment handoff fork, which writes a summary while the cache is warm at 0.1x price, is a smart cost idea. Single-shot business drafting segments are the right way to honor deleted_business_messages. Weaknesses: it tries to ship about 17 surfaces in v1 (secretary, inline, reader-mode groups, geofences, biometric step-up, Stars), so feasibility is poor unless it is phased. 'Forget' leaves the fact in the append-only replayed transcript. The Stop handler can break tool_use/tool_result pairing. The checklist user story promises sending to contacts, which the 24h business window forbids. It lacks trust-agent's defense against model-emitted rich-message buttons."
+  },
+  {
+   "key": "trust-agent",
+   "user_value": 8,
+   "differentiation": 7.5,
+   "feasibility": 6.5,
+   "technical_correctness": 8.5,
+   "trust": 9.5,
+   "notes": "This is the best engineering of the three and the closest to Muse's Sentinel design. It adds provenance-based targets: a recipient taken from an email always gets an approval request with a warning, and no grant can cover it. Rich-message <tg-button> and card-lookalike text from the model is stripped. 'Sent/done' footers are rendered from database state and never from model text. Gmail sends in two phases (draft, then send) with reconcile() and an 'unknown' state, so a crash does not cause a double send. Forgetting rotates the epoch, shreds old rows and stores fingerprints so the fact is not relearned. Each user has a DEK in a separate keys.db, so /delete_me is a true crypto-shred. The ledger is hash-chained. Missions with budgets and task_wait parking are the right model for durable background tasks. As a product it is narrower: groups are deferred, there are no files, no inline mode and no location. Approvals are heavy, since even adding a Todoist task or archiving mail needs a tap, which risks recreating Muse's fatigue. The long-lived biz:<bc>:<chat> transcripts also clash with deleting business messages. It reads more like a trustworthy assistant than a reason to switch from Mira."
+  },
+  {
+   "key": "pragmatic-mvp",
+   "user_value": 6.5,
+   "differentiation": 5.5,
+   "feasibility": 8.5,
+   "technical_correctness": 7,
+   "trust": 7.5,
+   "notes": "This is the most shippable plan, with a clean daily loop: streaming with Stop, memory with provenance, deterministic time zones, verified research in topics, files in and out, voice, groups that don't leak, guest mode and Stars. For a power user, though, v1 has no Gmail, no Calendar and no Secretary Mode. That skips the dossier's GAP #1 (connect tools in the first minute) and GAP #5 (hear the conversations where decisions happen). The result is essentially 'Mira on Claude with a trust UI', and the approval system has almost nothing to gate (send_to_chat and polls). There is a real API error: the episode rollover starts with a role:'system' row. Using one frozen toolset everywhere means guest and group runs see tools they can never use. 'Forget' only drops the fact from the next context while transcripts stay for 90 days. Good engineering details worth keeping: burst coalescing, '@blob' hydration, a per-conversation inline fallback for context, and quota replies with no LLM call."
+  }
+ ],
+ "winner": "telegram-native",
+ "best_ideas_to_graft": [
+  "From pragmatic-mvp: ship telegram-native in phases. v1.0 is pragmatic's core (DM streaming, memory, reminders, verified research, voice, files, guest, approval cards) plus Composio Gmail/Calendar connected at the moment of need. v1.1 adds Secretary, the inline toolbox and group reader mode behind getMe feature flags. That keeps the differentiation roadmap while still landing a real product.",
+  "From trust-agent: sanitize model output before any rich send. Strip <tg-button>, <tg-button-row>, web_app and login_url tags, and neutralize lines that imitate the approval-card header. Rich messages allow in-message buttons, so without this the model or injected content can fake an approval card. telegram-native misses this.",
+  "From trust-agent: render state footers and completion claims ('\u23f3 awaiting your approval', '\u2705 Sent 14:04 \u00b7 ledger #812') from database state, never from model text. The pending_approval tool_result should carry performed:false.",
+  "From trust-agent: the provenance rule S10 with a trusted_targets table. A recipient that came from email, web or business content always asks, with '\u26a0 this recipient came from an email, not from you', and no grant can cover it.",
+  "From trust-agent: two-phase outbound email. gmail_create_draft is allowed; gmail_send_draft is gated. Add ToolSpec.reconcile() that searches Sent mail or the calendar after a crash, and an 'unknown' status that asks the user instead of re-sending.",
+  "From trust-agent: make forgetting real. Rotate the epoch as a simple compaction, shred the old epoch rows, and record forgotten_fingerprints so the extractor never relearns the fact. Keep per-user DEKs in a separate keys.db on its own volume so /delete_me is a true crypto-shred, including in backups.",
+  "From trust-agent: if Stop or cancel arrives after an assistant row with tool_use is persisted, write is_error 'Cancelled by user' tool_results before any placeholder so the pairing stays valid.",
+  "From trust-agent: missions with success criteria, a cost budget ([Add budget][Stop]), and task_wait(on: approval | watcher | user_input) parking. Watchers compare content hashes first and call the LLM only when the hash changes.",
+  "From trust-agent: a deterministic time_resolve tool (chrono-node in the user's IANA zone) that the model must use for every date calculation, echoing 'Tue 14 Oct, 15:00 Almaty time'.",
+  "From trust-agent: add '[\ud83d\udcdd Remembered N \u00b7 Review]' to the last answer via editMessageReplyMarkup instead of sending new memory messages. Also add a /pause kill switch, a hash-chained ledger, and an import-graph test that bans global fetch and ToolSpec.execute outside the executor.",
+  "From pragmatic-mvp: files out through an isolated code-execution sub-call (xlsx, csv, pdf and png charts via sendDocument), and images and PDFs in stored as '@blob:<sha>' hydrated at request-build time so replays are byte-identical.",
+  "From pragmatic-mvp: coalesce bursts of messages that arrive within 700 ms into one user turn, and pick context_mode per conversation ('inline' fallback if role:'system' or clear_at is rejected, never switched mid-episode).",
+  "From pragmatic-mvp: when a quota runs out, reply with a template giving exact counts and reset time, with no LLM call. Count quotas per user-local day.",
+  "From pragmatic-mvp: make the memory-consent card the first onboarding step. Offer voice replies after the 3rd voice note. Use a 0.8 confidence threshold for extraction and save sensitive facts only on explicit request. Add DST golden tests for Europe/Kyiv and Asia/Almaty. Send verified places with share_place via sendVenue."
+ ],
+ "technical_errors_found": [
+  "pragmatic-mvp: the episode rollover starts episode+1 with a role:'system' '<previous-episode>' row (clear_at 'never'). A mid-conversation system message cannot be messages[0] and must follow a user message, so the request returns 400. It also contradicts the proposal's own HistoryWriter rule that messages[0] is a user row. The seed should be the first user row.",
+  "All three proposals: copy_text is used as the fallback for full drafted replies (expired business cards, 'Copy' buttons on drafts). CopyTextButton.text is limited to 1-256 characters (checked against core.telegram.org), so most drafts cannot be copied this way. Use a quoted message or a Mini App copy instead.",
+  "telegram-native: on stopped_message_generation it appends a text-only placeholder assistant row. If the stop lands during executing_tools, after an assistant row with tool_use was already persisted, this leaves unpaired tool_use blocks and two assistant rows in a row, and the next request fails. It must first append is_error tool_results, as trust-agent does.",
+  "telegram-native and pragmatic-mvp: memory_forget tombstones or shreds the fact row, but the fact stays in the append-only transcript that is replayed to Anthropic every turn. telegram-native only adds a context note; pragmatic 'simply omits' it and keeps closed episodes for 90 days. So 'forget' does not remove the data, which contradicts the provenance and ToS 4.2 claims. telegram-native also calls row deletion under a single HKDF master key 'crypto-shred', which it is not.",
+  "telegram-native: the checklist user story ('Anna gets a native Telegram checklist from me') overpromises. sendChecklist works only with a business connection that has can_reply, and only in private chats that had an incoming message in the last 24 h. Gora cannot start it.",
+  "trust-agent: business drafting runs in a long-lived append-only conversation keyed biz:<bc>:<chat> that contains consented peer text. deleted_business_messages removes only the business_messages rows; the transcript rows are not rotated or shredded, so deleted peer content keeps being replayed and stored. Use single-shot segments, as telegram-native does, or trigger epoch shredding.",
+  "pragmatic-mvp: the rollover side call uses thinking disabled while the proposal claims switching to claude-opus-5-5 is a config change. Opus 5.5 rejects thinking.type 'disabled' with a 400, so this breaks unless SIDE_MODEL stays pinned to claude-opus-5.",
+  "pragmatic-mvp: the outbound limiter spaces private-chat sends at 350 ms (about 3 msg/s). Telegram's FAQ recommends about 1 msg/s per chat with only short bursts, so this invites 429s.",
+  "pragmatic-mvp: it sets the files beta header ('files-api-2025-04-14') per conversation. The Files API is now GA and that header returns the old beta response shapes, and toggling betas mid-conversation risks changes to the request and cache. Use the stable client.files methods instead.",
+  "pragmatic-mvp (likely): memory extraction calls client.beta.messages.parse with zodOutputFormat. The documented pattern is client.messages.parse with zodOutputFormat from '@anthropic-ai/sdk/helpers/zod'; mixing the beta namespace with the non-beta helper may not typecheck.",
+  "pragmatic-mvp: one frozen toolset for every route means guest and group runs are offered make_file, send_to_chat and research_start, which policy then denies. That wastes turns and leaks capability names into public contexts. Separate PUBLIC and FULL toolsets (telegram-native and trust-agent) cache just as well per route.",
+  "pragmatic-mvp: it opens drafts with sendMessageDraft('') and then continues the same draft_id with sendRichMessageDraft. Mixing plain and rich drafts under one draft_id is undocumented; start with sendRichMessageDraft and a <tg-thinking> block instead.",
+  "telegram-native and trust-agent: \ud83d\udc4d/\ud83d\udc4e reactions as nudge feedback in the DM depend on message_reaction updates. The Bot API says 'The bot must be an administrator in the chat' to receive them, so delivery in private chats is unverified. Both keep buttons as a fallback, but it cannot be relied on as a learning signal.",
+  "Dossier (grammY section): it lists the BusinessBotRights flag as can_delete_outgoing_messages. The live Bot API field is can_delete_sent_messages. No proposal uses it, but typed code copied from the dossier would be wrong."
+ ]
+}

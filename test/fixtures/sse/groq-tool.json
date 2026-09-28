@@ -1,0 +1,7 @@
+[
+  {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1790000000,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_1","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}],"x_groq":{"id":"req_02","seed":7}},
+  {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1790000000,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_1","choices":[{"index":0,"delta":{"reasoning":"Need weather for Almaty.","channel":"analysis"},"logprobs":null,"finish_reason":null}]},
+  {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1790000000,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"fc_3f1c2a8e-0b1d-4c5e-9a7b-2d6e8f9a0b1c","type":"function","function":{"name":"weather_get","arguments":"{\"place\":\"Almaty\",\"days\":1}"}}]},"logprobs":null,"finish_reason":null}]},
+  {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1790000000,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_1","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}],"x_groq":{"id":"req_02","usage":{"prompt_tokens":1450,"completion_tokens":38,"total_tokens":1488}},"usage":{"prompt_tokens":1450,"completion_tokens":38,"total_tokens":1488}},
+  {"id":"chatcmpl-2","object":"chat.completion.chunk","created":1790000000,"model":"openai/gpt-oss-120b","system_fingerprint":"fp_1","choices":[],"usage":{"prompt_tokens":1450,"completion_tokens":38,"total_tokens":1488}}
+]

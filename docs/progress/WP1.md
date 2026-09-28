@@ -1,0 +1,21 @@
+# WP1 progress
+- started: reading 04, specs
+- plan: keystore.ts, crypto.ts, repos/{index,users,conversations,messages,inputs,runs,kv,usage,common}.ts, ledger/{index,ledger}.ts, billing/{index,quotas}.ts, privacy/{index,export,delete,shred,retention,backup}.ts, scripts/admin.ts; tests test/unit/db/{crypto,repos,ledger,quotas}.test.ts, test/unit/privacy/*.test.ts, test/e2e/privacy.e2e.test.ts
+- decisions: inputs/conv_events sealed under owner DEK (u:/g:/b:) else epoch DEK; ledger under u:<userId>; rate(): in-memory token bucket (<10min windows) / rate_buckets fixed window (>=10min); refusal cooldown in kv 'cooldown:<userId>'
+- done: src/db/keystore.ts, src/db/crypto.ts. next: repos
+- done: repos/{common,users,conversations,messages,inputs,runs,kv,usage,index}.ts. next: typecheck, ledger
+- done: ledger/{ledger,index}.ts. next: billing/quotas
+- done: billing/{quotas,index}.ts. next: privacy/{shred,delete,export,retention,backup,index}.ts
+- done: privacy/shred.ts. next: delete.ts, export.ts, retention.ts, backup.ts, index.ts
+- (restart 2) plan: privacy/delete.ts (USER_DATA_TABLES loop, biz DEKs, deletion_requests, resume stuck), export.ts (JSON + hooks), retention.ts (90d epochs, guest 24h/biz_draft 30d purge, llm raw 30d, ledger/sentinel 365d mirrored trigger cond, rate_buckets, orphan blobs, hooks, resume deleting users), backup.ts (sys:backup job, gora.db+keys.db, 7d prune), index.ts (jobs shred_epoch payload {conversationId,epoch,reason}|refId, retention_sweep hourly cron, backup nightly); then admin.ts, then tests
+- done: privacy/{delete,export,retention,backup,index}.ts. next: typecheck privacy, then scripts/admin.ts, then tests
+- done: scripts/admin.ts (runAdmin exported, typecheck clean). next: tests test/unit/db/{crypto,repos,ledger,quotas}, test/unit/privacy/*, e2e privacy
+- done: test/unit/db/crypto.test.ts green (10). next: repos.test.ts
+- done: test/unit/db/{env,crypto,repos,ledger}.test.ts green (31). NOTE FakeClock.advance is async: always await. next: quotas.test.ts
+- done: quotas.test.ts green (8). next: test/unit/privacy/{env,shred,delete,export,retention,backup,admin}.test.ts
+- done: test/unit/privacy/{env,shred}.test.ts green (9). next: delete/export/retention/backup/admin unit tests
+- done: privacy unit tests delete(7) export(3) retention(4) green. next: backup.test.ts, admin.test.ts, then e2e privacy
+- done: backup.test.ts (4) green; switched backups to VACUUM INTO (node:sqlite backup() hangs on Node 26.8.1 — deviation). next: admin.test.ts, e2e privacy
+- done: admin.test.ts (6) green. next: e2e test/e2e/privacy.e2e.test.ts
+- done: test/e2e/privacy.e2e.test.ts (2) green. next: final gate (typecheck, all WP1 tests, foundation tests)
+- FINAL GATE: typecheck clean for WP1 paths; unit db+privacy 72/72; e2e privacy 2/2. registerCounter now keep-first (foundation testApp pre-registers 'mission'). Remaining foundation failures belong to other WPs.

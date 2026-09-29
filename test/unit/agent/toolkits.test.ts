@@ -51,12 +51,18 @@ describe('preloads (03 R3)', () => {
     expect(preloadKits({ ...base, text: 'x', hasPendingApproval: true })).toEqual(['account']);
     expect(preloadKits({ ...base, text: 'x', route: 'mission' })).toEqual(['missions']);
     expect(preloadKits({ ...base, text: 'move my meeting', connected: { gmail: false, gcal: true } })).toEqual(['calendar']);
-    expect(preloadKits({ ...base, text: 'move my meeting' })).toEqual([]);
+    // s07 B2: a calendar question preloads the calendar kit (with integration_connect) even when not connected
+    expect(preloadKits({ ...base, text: 'move my meeting' })).toEqual(['calendar']);
+    expect(preloadKits({ ...base, text: 'что у меня в календаре завтра?' })).toEqual(['calendar']);
+    // s07 A2: acting on a website → browser
+    expect(preloadKits({ ...base, text: 'забронируй столик в Alma на 19:00' })).toEqual(['browser']);
+    expect(preloadKits({ ...base, text: 'please book me a table for two' })).toEqual(['browser']);
+    expect(preloadKits({ ...base, text: 'a good book about history' })).toEqual([]);
     expect(preloadKits({ ...base, text: 'check my inbox', connected: { gmail: true, gcal: false } })).toEqual(['email']);
     expect(preloadKits({ ...base, text: 'проверь почту', connected: { gmail: true, gcal: false } })).toEqual(['email']);
   });
   it('history kits and the union', () => {
-    const membership = { core: ['time_resolve'], web: ['web_search'], calendar: ['calendar_list_events'], email: ['gmail_search'], missions: [], secretary: [], files: ['make_file'], account: [] } as Record<ToolkitId, string[]>;
+    const membership = { core: ['time_resolve'], web: ['web_search'], calendar: ['calendar_list_events'], email: ['gmail_search'], missions: [], secretary: [], files: ['make_file'], account: [], browser: [] } as Record<ToolkitId, string[]>;
     expect(kitsOfTools(membership, ['web_search', 'make_file'])).toEqual(['web', 'files']);
     expect(selectActiveKits({ loaded: ['core', 'email'], historyKits: ['web'], preloads: ['account', 'web'] })).toEqual(['core', 'web', 'email', 'account']);
   });

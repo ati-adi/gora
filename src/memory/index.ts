@@ -170,7 +170,12 @@ export function createMemoryService(s: Services): MemoryService {
     async forget(scope, sel, by) {
       const facts = store.select(scope, sel);
       const allowed = [];
-      for (const f of facts) if (await authorize(scope, by, f.row.userId)) allowed.push(f);
+      for (const f of facts) {
+        // s07 lead fix (red team): a group fact Gora extracted by itself from the chat (spec 07 C3) belongs to the
+        // chat, not to an author — any member may forget it, exactly like the stored messages it came from
+        if (scope.kind === 'group' && f.row.createdBy === 'extractor') allowed.push(f);
+        else if (await authorize(scope, by, f.row.userId)) allowed.push(f);
+      }
       const actor = s.repos.users.getByTg(by.tgUserId)?.id ?? null;
       return { forgotten: store.forgetFacts(scope, allowed, actor) };
     },

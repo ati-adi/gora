@@ -1,7 +1,7 @@
 // integrations/fake.ts (WP5) — FakeIntegrationProvider (01 F9): an in-memory demo mailbox and calendar labelled
 // "Demo data". The default provider (refused in production by config). The instance is the "external world": it survives
 // testApp.restart() because the service keeps a passed provider as-is. Idempotency keys make create calls repeat-safe.
-import type { CalendarApi, CalEvent, CalEventInput, DraftInput, IntegrationKind, IntegrationProvider, MailApi, Ms, UserId } from '../contracts/index.ts';
+import type { CalendarApi, CalEvent, CalEventInput, ConnectionPoll, DraftInput, IntegrationKind, IntegrationProvider, MailApi, Ms, UserId } from '../contracts/index.ts';
 import { demoEvents, demoThreads, type DemoThread } from './fakeFixtures.ts';
 
 interface Draft extends DraftInput { draftId: string; idemKey: string }
@@ -37,12 +37,42 @@ export class FakeIntegrationProvider implements IntegrationProvider {
     return b;
   }
 
+  /** s07 (B1 polling): pending connect links by pendingRef; `completeByPoll` / `failByPoll` script their status. */
+  private readonly pending = new Map<string, { state: string; userId: UserId; kind: IntegrationKind; status: 'pending' | 'active' | 'failed' }>();
+
   /** The fake "consent screen" is GET /dev/fake-connect?state=… (IntegrationService.devConnect). */
-  async connectLink(userId: UserId, kind: IntegrationKind, callbackUrl: string): Promise<{ url: string }> {
+  async connectLink(userId: UserId, kind: IntegrationKind, callbackUrl: string): Promise<{ url: string; pendingRef: string; expiresAt: Ms }> {
     this.calls.push(`connectLink:${userId}:${kind}`);
     const u = new URL(callbackUrl);
     const state = u.searchParams.get('state') ?? '';
-    return { url: `${u.origin}/dev/fake-connect?state=${encodeURIComponent(state)}` };
+    const pendingRef = `fake_ca_${state.slice(0, 12)}`;
+    this.pending.set(pendingRef, { state, userId, kind, status: 'pending' });
+    return { url: `${u.origin}/dev/fake-connect?state=${encodeURIComponent(state)}`, pendingRef, expiresAt: this.now() + 10 * 60_000 };
+  }
+
+  async connectionStatus(pendingRef: string, expect: { userId: UserId; kind: IntegrationKind }): Promise<ConnectionPoll> {
+    this.calls.push(`connectionStatus:${expect.userId}:${expect.kind}`);
+    const p = this.pending.get(pendingRef);
+    if (!p) return { status: 'failed', reason: 'error' };
+    if (p.userId !== expect.userId || p.kind !== expect.kind) return { status: 'failed', reason: 'mismatch' };
+    if (p.status === 'active') return { status: 'active', accountRef: `fake:${p.state.slice(0, 12)}` };
+    if (p.status === 'failed') return { status: 'failed', reason: 'failed' };
+    return { status: 'pending' };
+  }
+
+  /** Test helper: the user finished the consent screen but the callback never arrives (polling completes it). */
+  completeByPoll(pendingRef: string): void {
+    const p = this.pending.get(pendingRef);
+    if (p) p.status = 'active';
+  }
+  /** Test helper: the provider reports the pending connection as failed. */
+  failByPoll(pendingRef: string): void {
+    const p = this.pending.get(pendingRef);
+    if (p) p.status = 'failed';
+  }
+  /** Test helper: pending refs issued so far (oldest first). */
+  pendingRefs(): string[] {
+    return [...this.pending.keys()];
   }
 
   async completeConnection(query: Record<string, string>, _expect?: { userId: UserId; kind: IntegrationKind }): Promise<{ accountRef: string }> {

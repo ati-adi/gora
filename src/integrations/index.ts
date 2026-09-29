@@ -20,7 +20,11 @@ function buildProvider(s: Services, fetchImpl: typeof fetch | undefined): Integr
         s.log.warn({ provider: 'composio' }, 'composio selected without a key or fetchImpl; integrations disabled');
         return null;
       }
-      return new ComposioProvider({ apiKey: cfg.keys.composio, fetchImpl, clock: s.clock, log: s.log.child({ mod: 'composio' }) });
+      return new ComposioProvider({
+        apiKey: cfg.keys.composio, fetchImpl, clock: s.clock, log: s.log.child({ mod: 'composio' }), crypto: s.crypto,
+        authConfigs: cfg.composio.authConfigs,
+        tzOf: (userId) => s.repos.users.getById(userId)?.tz ?? null,
+      });
     default:
       return null;
   }

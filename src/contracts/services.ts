@@ -21,6 +21,8 @@ import type { PaymentsService, QuotaKind, QuotaService } from './billing.ts';
 import type { Ledger } from './ledger.ts';
 import type { ProviderProfile } from './llm.ts';
 import type { Strings } from './i18n.ts';
+import type { GroupModule, GroupParticipation } from './groups.ts';
+import type { BrowserModule, BrowserTaskService } from './browser.ts';
 
 /**
  * Every WP's hook into /deletemydata, epoch shredding, /export (§11.9) and the retention sweep. Each WP decrypts its own
@@ -58,6 +60,14 @@ export interface PrivacyService {
  * A hook error is logged and never fails the run. WP7 uses it for "at most one onboarding card after each completed run" (§3).
  */
 export interface RunHook { name: string; onRunFinished(run: RunRow, conv: ConversationRow, sent: SentRef[]): Promise<void> | void }
+
+/**
+ * s07 addition: called by the mission module (missions/index.ts onFinished) after a mission reached a terminal state —
+ * finish (done/failed/cancelled) or Stop. BR registers one at factory time to close the task's browser context and mark
+ * the browser_tasks row. Synchronous registration (`s.missionHooks.push(h)`); a hook error is logged and never fails the
+ * mission. `status` is the mission's new status.
+ */
+export interface MissionHook { name: string; onMissionEnded(missionId: string, status: 'done' | 'failed' | 'cancelled'): Promise<void> | void }
 
 export type ChatRef = { chatId: number; threadId?: number };
 /**
@@ -146,6 +156,13 @@ export interface Services {
   signals: SignalsService;
   /** C4 (src/behaviour/, BehaviourModule.policy). */
   proactivePolicy: ProactivePolicy;
+  // ── s07 additions (spec 07). Dereferenced at call time, except `missionHooks` (a factory-time registry like runHooks).
+  /** Created by app.ts before any module factory; the mission module calls them when a mission ends (BR closes contexts). */
+  missionHooks: MissionHook[];
+  /** §C (src/groups/, GroupModule.participation). */
+  groupAgent: GroupParticipation;
+  /** §A (src/browser/, BrowserModule.tasks). The capability itself is `caps.browser`. */
+  browserTasks: BrowserTaskService;
 }
 
 // ── Factory return shapes (01 §4.4 wiring table)
@@ -210,6 +227,7 @@ export interface TelegramModuleOptions {
  *  - context providers:   s.contextProviders.push(p)            (kernel/registries.ts registerNamed)
  *  - privacy hooks:       s.privacyHooks.push(h)
  *  - run hooks:           s.runHooks.push(h)
+ *  - mission hooks:       s.missionHooks.push(h)                (s07)
  *  - outbox sent hooks:   s.telegram.outbox.onSent(refKind, hook) (buffered by the pre-gateway, see TelegramModuleOptions.sentHooks)
  *  - quota counters:      s.quotas.registerCounter('mission'|'watcher', fn)
  *  - UI strings:          s.strings.t(...)                      (built first)
@@ -243,6 +261,10 @@ export interface Factories {
   createProfileService(s: Services): ProfileService;
   /** Friend-mode (spec 05 §C): src/behaviour/index.ts. Built right after createMissionModule. */
   createBehaviourModule(s: Services): BehaviourModule;
+  /** s07 (spec 07 §C): src/groups/index.ts. Built right after createBehaviourModule. */
+  createGroupModule(s: Services): GroupModule;
+  /** s07 (spec 07 §A): src/browser/index.ts. Built right after createGroupModule (after missions: browse tasks run as missions). */
+  createBrowserModule(s: Services): BrowserModule;
   createAgentModule(s: Services): AgentModule;
   createTelegramModule(s: Services, o: TelegramModuleOptions): Promise<TelegramModule>;
   /** WP7b. Called after createTelegramModule, before createSurfaces. */

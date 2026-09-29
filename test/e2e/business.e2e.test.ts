@@ -117,7 +117,7 @@ describe('Secretary Mode e2e (F12, §10.2)', () => {
     expect(t.s.business.listChats(u.id, 'unanswered', 5)).toEqual([]);
   });
 
-  it('window closed: Sentinel denies the approve, and the owner gets the draft to copy ([📋 Copy] only when ≤ 256 chars)', async () => {
+  it('window closed: Sentinel denies the approve, and the owner gets the draft to copy ([📋 Copy] only when ≤ 256 chars)', { timeout: 60_000 }, async () => { // s07 gate: advances days; 12–13 s alone, slower under load
     const { t, u } = await consentedWorld('draft');
     const short = await draftCard(t, 'Short reply.');
     // the window ends; the owner taps Approve before any job ran

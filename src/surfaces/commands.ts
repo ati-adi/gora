@@ -10,7 +10,7 @@ import { randomToken } from '../kernel/ids.ts';
 import type { Onboarding } from './onboarding.ts';
 import type { PaymentsModule } from './payments.ts';
 import { st } from './strings.ts';
-import { appUrl, cbBtn, dmConversation, editCard, errName, langOf, sendRich, webAppBtn, type Keyboard, type Surf } from './util.ts';
+import { appUrl, botUsername, cbBtn, dmConversation, editCard, errName, langOf, sendRich, urlBtn, webAppBtn, type Keyboard, type Surf } from './util.ts';
 
 export type PrivateCommand = 'new' | 'memory' | 'ledger' | 'tasks' | 'approvals' | 'pause' | 'resume' | 'incognito' | 'import' | 'nudges' | 'quiet' | 'settings' | 'plan' | 'privacy' | 'export' | 'deletemydata' | 'paysupport' | 'terms' | 'help' | 'voice';
 export const PRIVATE_COMMANDS: readonly PrivateCommand[] = ['new', 'memory', 'ledger', 'tasks', 'approvals', 'pause', 'resume', 'incognito', 'import', 'nudges', 'quiet', 'settings', 'plan', 'privacy', 'export', 'deletemydata', 'paysupport', 'terms', 'help', 'voice'];
@@ -279,6 +279,8 @@ export function createCommands(surf: Surf, deps: { ob: Onboarding; payments: Pay
         [memOn ? cbBtn(surf, st('settings_memory_toggle_off', lang), 'ob', ['mem', 'n', 's'], c.user.tgUserId) : cbBtn(surf, st('settings_memory_toggle_on', lang), 'ob', ['mem', 'y', 's'], c.user.tgUserId, 'success')],
         [cbBtn(surf, st('settings_tz', lang), 'tz', ['ch'], c.user.tgUserId)],
       ];
+      // spec 07 C6: add Gora to a group — the startgroup picker, no admin rights requested
+      if (s.config.features.groups) kb.push([urlBtn(st('add_to_group_button', lang), `https://t.me/${botUsername(surf)}?startgroup=g&admin=`)]);
       await reply(c, md, { keyboard: kb });
     },
 

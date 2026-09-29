@@ -19,11 +19,11 @@ import { LIMITS, PLANS } from '../config.ts';
 import { addDaysToDate, isValidTz, localDay, wallTimeOf, zonedToInstant } from '../kernel/timeMath.ts';
 import { createUsageRepo, type UsageColumn } from '../db/repos/usage.ts';
 
-export const QUOTA_KINDS: readonly QuotaKind[] = Object.freeze(['turn', 'web_search', 'stt_seconds', 'file', 'guest_answer', 'mission', 'watcher', 'cost_micros']);
+export const QUOTA_KINDS: readonly QuotaKind[] = Object.freeze(['turn', 'web_search', 'stt_seconds', 'file', 'guest_answer', 'mission', 'watcher', 'cost_micros', 'browser']);
 
 /** usage_daily column per daily kind (mission/watcher are counts, not daily). */
 const COLUMN: Readonly<Partial<Record<QuotaKind, UsageColumn>>> = Object.freeze({
-  turn: 'turns', web_search: 'web_searches', stt_seconds: 'stt_seconds', file: 'files', guest_answer: 'guest_answers', cost_micros: 'cost_micros',
+  turn: 'turns', web_search: 'web_searches', stt_seconds: 'stt_seconds', file: 'files', guest_answer: 'guest_answers', cost_micros: 'cost_micros', browser: 'browser_tasks',
 });
 
 export function planLimit(p: PlanLimits, k: QuotaKind): number {
@@ -36,6 +36,7 @@ export function planLimit(p: PlanLimits, k: QuotaKind): number {
     case 'mission': return p.activeMissions;
     case 'watcher': return p.watchers;
     case 'cost_micros': return p.dailyCostCapMicros;
+    case 'browser': return p.browserTasksPerDay;
   }
 }
 

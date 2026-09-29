@@ -29,6 +29,11 @@ export interface ToolCtx {
   missionId?: string; taint: ReadonlySet<TaintSource>; signal: AbortSignal; effects: { push(e: Effect): void };
   services: Services; log: Logger;
   idemKey: string; /* toolUseId, or 'pa:<id>' when executing an approval */
+  /**
+   * s07 lead addition: set ONLY by the executor's approval path (executeApproved) — the owner approved this very call.
+   * Tools must use this, never `idemKey.startsWith('pa:')` (the idemKey of a normal call is the provider's tool_use id).
+   */
+  approvedAction?: { pendingActionId: string };
   /** 03 R6 (WP0 addition): priority for capability calls made by this tool ('interactive' for user-input runs, 'approval' when executing an approval, else 'background'). */
   priority: Priority;
 }
@@ -54,11 +59,20 @@ export interface ToolSpec<I = any, O = unknown> {
    *  - `sourceRefs`: stored in pending_actions.source_refs_json for `approvals.voidBySourceRef` (e.g. 'bizmsg:<conn>:<chat>:<ids>').
    */
   approvalMeta?(input: I, ctx: ToolCtx): Promise<{ card?: { chatId: number; threadId?: number }; expiresAt?: Ms; sourceRefs?: string[] }>;
+  /**
+   * s07 addition (spec 07 A4, BR): a picture shown with the approval card — the browser submit card carries a screenshot
+   * of the page. The executor (trust/executor.ts, edited by BR) calls it after `approvals.create` and sends the photo
+   * into the card's chat/thread right before the card (outbox sendPhoto via a user-owned blob, idempotency
+   * 'pa_photo:<pendingActionId>'). It is NOT part of the ApprovalDiff (the diff is sealed and HMAC-compared at execution;
+   * a screenshot is never stable). Errors are logged and the card is sent without the picture.
+   */
+  approvalAttachment?(input: I, ctx: ToolCtx): Promise<{ kind: 'photo'; bytes: Uint8Array; caption?: string } | null>;
 }
 
 /** 03 R3: named toolkits over FULL (request building only; `core` is always loaded). */
-export type ToolkitId = 'core' | 'web' | 'calendar' | 'email' | 'missions' | 'secretary' | 'files' | 'account';
-export const TOOLKIT_IDS: readonly ToolkitId[] = ['core', 'web', 'calendar', 'email', 'missions', 'secretary', 'files', 'account'];
+/** s07 addition: 'browser' (spec 07 A2: browse_task for the chat run + the browser_* tools of a browse mission). */
+export type ToolkitId = 'core' | 'web' | 'calendar' | 'email' | 'missions' | 'secretary' | 'files' | 'account' | 'browser';
+export const TOOLKIT_IDS: readonly ToolkitId[] = ['core', 'web', 'calendar', 'email', 'missions', 'secretary', 'files', 'account', 'browser'];
 export interface ToolDefinitions { definitions: readonly BetaToolUnion[]; hash: string; names: ReadonlySet<string> }
 /**
  * The registry (WP5, tools/registry.ts) is built by `createToolRegistry(profile, external)`:
@@ -79,7 +93,8 @@ export interface ToolRegistry {
 }
 
 /** WP0 addition: which work package implements each tool of the 01 §6 catalog (+ `use_toolkit`, 03 R3). */
-export type ToolOwner = 'WP4' | 'WP5' | 'WP6a' | 'WP6b' | 'WP7a' | 'WP7b';
+/** s07 additions: 'BR' (src/browser/tools.ts) and 'GR' (src/groups/tools.ts), the spec 07 builder sets (docs/spec/08-s07-plan.md). */
+export type ToolOwner = 'WP4' | 'WP5' | 'WP6a' | 'WP6b' | 'WP7a' | 'WP7b' | 'BR' | 'GR';
 export const TOOL_OWNERS: Readonly<Record<string, ToolOwner>> = Object.freeze({
   // WP4 — src/trust/tools.ts (task_wait lives with the executor, which owns its park semantics, §5.6)
   revise_pending_action: 'WP4', task_wait: 'WP4',
@@ -96,6 +111,11 @@ export const TOOL_OWNERS: Readonly<Record<string, ToolOwner>> = Object.freeze({
   mission_finish: 'WP6b', mission_report: 'WP6b', mission_start: 'WP6b', watcher_create: 'WP6b', watcher_manage: 'WP6b',
   // WP7a — src/surfaces/tools.ts · WP7b — src/surfaces/business/tools.ts
   poll_create: 'WP7a', business_draft_reply: 'WP7b', business_list_chats: 'WP7b', business_read_chat: 'WP7b',
+  // s07 BR — src/browser/tools.ts: browse_task (dm/topic: starts the browse mission) + the in-mission browser toolkit (surface 'mission' only)
+  browse_task: 'BR', browser_open: 'BR', browser_snapshot: 'BR', browser_click: 'BR', browser_type: 'BR', browser_select: 'BR', browser_press: 'BR',
+  browser_scroll: 'BR', browser_back: 'BR', browser_show: 'BR', browser_done: 'BR',
+  // s07 GR — src/groups/tools.ts: the add-to-group link (dm/topic)
+  group_invite_link: 'GR',
 });
 
 /** WP0 addition: the module that exports each tool's spec (WP5's registry imports its own; the rest arrive as `external`). */
@@ -108,6 +128,8 @@ export const TOOL_FILES: Readonly<Record<string, string>> = Object.freeze(
       if (name.startsWith('mission_') || name.startsWith('watcher_')) return [name, 'src/missions/tools.ts'];
       if (name === 'poll_create') return [name, 'src/surfaces/tools.ts'];
       if (name.startsWith('business_')) return [name, 'src/surfaces/business/tools.ts'];
+      if (name === 'browse_task' || name.startsWith('browser_')) return [name, 'src/browser/tools.ts'];
+      if (name === 'group_invite_link') return [name, 'src/groups/tools.ts'];
       const impl: Record<string, string> = {
         web_search: 'web', web_fetch: 'web', fx_convert: 'fx', integration_connect: 'connect', ledger_query: 'ledger', location_request: 'location',
         make_file: 'makeFile', offer_choices: 'choices', react: 'react', settings_update: 'settings', share_place: 'place', time_resolve: 'time',

@@ -33,6 +33,8 @@ const EN = {
 
   // Home
   hello: 'Hi, {name}',
+  add_to_group_title: 'Add Gora to a group',
+  add_to_group_subtitle: 'I’ll help with plans in a chat with friends',
   plan_badge: '{plan} plan',
   nav_approvals: 'Approvals',
   nav_tasks: 'Tasks',
@@ -454,6 +456,8 @@ const RU: Record<Key, string> = {
   not_in_telegram_body: 'Этот центр управления работает только внутри Telegram. Откройте чат с Gora и нажмите кнопку меню «Gora».',
 
   hello: 'Привет, {name}',
+  add_to_group_title: 'Добавить Гору в группу',
+  add_to_group_subtitle: 'Помогу с планами в чате с друзьями',
   plan_badge: 'План {plan}',
   nav_approvals: 'Подтверждения',
   nav_tasks: 'Задачи',

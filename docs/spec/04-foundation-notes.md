@@ -536,3 +536,24 @@ Callback owners:
 - The API routes use `todos.setDone`, `nudges.prefs/setPref`, `approvals.get`, `missions.list`, `watchers.list`,
   `scheduler.list`, `payments.status`, `grants`, `trustedTargets` and `conversations.listByUser`.
 - Test with `t.api(...)` and `signInitData`.
+
+---
+
+## 10. s07 integration-gate contract deltas (lead, 2026-09-29)
+
+Added at the s07 gate (docs/progress/s07-gate.md has the reasons; every one is covered by a test under
+`test/review/s07/`):
+
+- **browser.ts** — `NetworkPolicy.connectAddress?(host, port)`: the vetted address the egress proxy connects to
+  (DNS pinned). `BrowserSession.click/type/select/press` take `o.approved` (the owner approved this action; without
+  it a non-GET document navigation is refused and the action resolves `{ok:false, error:'needs_approval'}` — a new
+  `BrowserActionError`). `BrowserTaskService.forConversation(conversationId)`.
+- **tools.ts** — `ToolCtx.approvedAction?: { pendingActionId }`, set ONLY by the executor's approval path. Never infer
+  approval from `idemKey.startsWith('pa:')`; the executor refuses provider tool_use ids starting with `pa:` / `undo:`.
+- **groups.ts** — `GroupParticipation.recentContext(chatId, {excludeTgMessageId?, threadId?})` (GR-1) and
+  `onEdited({chatId, tgMessageId, fromTgId, text, at})`.
+- **integrations.ts** — `sendConnectCard(…, chat: {chatId, threadId?, resumeConversationId?})`.
+- **storage.ts** — `ConversationsRepo.listByChat(tgChatId, {kind?, status?, limit?})`.
+- **Migration 005** `group_summaries.covered_from_at` (never edit 004; fix forward).
+- **agent/context.ts** — a browse mission (`browserTasks.forConversation`, or a task still `starting`) carries only
+  capabilities/events/budget/surface/quota/mission parts: no profile, user_model, memories, open items or location.

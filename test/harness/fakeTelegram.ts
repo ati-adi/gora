@@ -21,6 +21,8 @@ export const TEST_BOT_INFO: UserFromGetMe = {
   can_manage_bots: false,
   supports_join_request_queries: false,
 };
+/** s07 (spec 07 C1): the same bot with group privacy mode OFF (BotFather /setprivacy → Disable). */
+export const TEST_BOT_INFO_READS_ALL: UserFromGetMe = { ...TEST_BOT_INFO, can_read_all_group_messages: true };
 
 export interface TgCall { method: string; payload: any; at: number; result?: unknown; error?: { error_code: number; description: string } }
 export interface TgError { error_code: number; description: string; parameters?: { retry_after?: number; migrate_to_chat_id?: number } }

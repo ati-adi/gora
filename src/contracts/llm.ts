@@ -64,7 +64,10 @@ export interface CallMeta { userId?: UserId | null; conversationId?: string | nu
  */
 export type SidePurpose = 'triage' | 'extract' | 'import' | 'title' | 'semantic' | 'handoff' | 'make_file' | 'summarize'
   // friend-mode additions (spec 05): B4 profile card (fast), C4 proactive message (main) and its friend check (fast)
-  | 'consolidate' | 'compose' | 'judge';
+  | 'consolidate' | 'compose' | 'judge'
+  // s07 additions (spec 07 §C, GR): rolling group summary (fast), automatic group facts (fast), the chime-in judge
+  // (fast), the chime-in message (main), /catchup (fast); (§A, BR) the optional snapshot-describe fallback is caps.vision.
+  | 'group_summary' | 'group_facts' | 'group_judge' | 'group_compose' | 'group_catchup';
 /**
  * `role` (friend-mode addition): which model answers — 'fast' (default: the side model; Groq models.fast) or 'main'
  * (Anthropic profile.models.main; Groq models.main). Only C4 composition asks for 'main'.

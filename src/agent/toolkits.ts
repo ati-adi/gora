@@ -45,6 +45,8 @@ const URL_RE = /\bhttps?:\/\/\S+|\bwww\.[a-z0-9-]+\.[a-z]{2,}/i;
 const WEB_WORDS_RE = /(search|find|price|news|weather|курс|погод|найди)/i;
 const CAL_WORDS_RE = /(calendar|meeting|event|календар|встреч|событи)/i;
 const MAIL_WORDS_RE = /(\bmail|e-mail|email|inbox|почт|письм|имейл|емейл)/i;
+/** s07 (spec 07 A2): acting on a website → the browser toolkit (browse_task). */
+const BROWSE_WORDS_RE = /(забронир|бронь|запиши меня|запишись на|оформи заказ|закажи столик|заполни (?:форму|анкету)|\bbook (?:a|me|us)\b|\breserve\b|fill (?:in|out) (?:the|a|this) form|sign me up)/i;
 
 export interface PreloadInput {
   /** Text of the run's input (owner text of the run-start row; may be empty for events). */
@@ -61,7 +63,10 @@ export function preloadKits(p: PreloadInput): ToolkitId[] {
   if (WEB_WORDS_RE.test(p.text)) out.add('web');
   if (p.hasPendingApproval) out.add('account');
   if (p.route === 'mission') out.add('missions');
-  if (p.connected.gcal && CAL_WORDS_RE.test(p.text)) out.add('calendar');
+  // s07 (spec 07 B2): a calendar question preloads the calendar kit even when nothing is connected (its tools answer
+  // NOT_CONNECTED and the kit carries integration_connect), so the first reply can be the one-line connect offer.
+  if (CAL_WORDS_RE.test(p.text)) out.add('calendar');
+  if (BROWSE_WORDS_RE.test(p.text)) out.add('browser');
   if (p.connected.gmail && MAIL_WORDS_RE.test(p.text)) out.add('email');
   return [...out];
 }

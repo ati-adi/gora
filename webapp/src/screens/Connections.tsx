@@ -14,7 +14,8 @@ import { confirm, haptic, openLink } from '../lib/tg.ts';
 type Level = 'none' | 'read' | 'draft' | 'act';
 interface ConnData {
   provider: string | null;
-  integrations: Array<{ kind: 'gmail' | 'gcal'; connected: boolean; level: Level }>;
+  /** `pending` (s07 B1): a connect link is still being polled; the connection completes on its own. */
+  integrations: Array<{ kind: 'gmail' | 'gcal'; connected: boolean; level: Level; pending?: boolean }>;
   grants: Array<{ id: string; toolName: string; scope: '24h' | 'always'; expiresAt: number | null }>;
   trusted: Array<{ hmac: string; kind: string; value: string; source: string; createdAt: number }>;
 }
@@ -33,6 +34,7 @@ export function Connections() {
   if (!q.data) return <ErrorState error={q.error} onRetry={q.reload} />;
   const d = q.data;
   const svc = (k: 'gmail' | 'gcal') => t(k);
+  const waiting = lang === 'ru' ? 'ожидаю подключения…' : 'waiting for the connection…';
 
   const connect = (k: 'gmail' | 'gcal') => act.run(async () => {
     const { url } = await post<{ url: string }>(`/connections/${k}/link`);
@@ -78,7 +80,7 @@ export function Connections() {
 
       {d.integrations.map((i) => (
         <Section key={i.kind} title={svc(i.kind)} footer={i.connected ? t('level_hint') : undefined}>
-          <Row icon={i.kind === 'gmail' ? '📧' : '📅'} title={svc(i.kind)} right={<Badge tone={i.connected ? 'ok' : 'muted'}>{i.connected ? t('connected') : t('not_connected')}</Badge>} />
+          <Row icon={i.kind === 'gmail' ? '📧' : '📅'} title={svc(i.kind)} right={<Badge tone={i.connected ? 'ok' : 'muted'}>{i.connected ? t('connected') : i.pending ? waiting : t('not_connected')}</Badge>} />
           {i.connected ? (
             <>
               <div className="subhead">{t('level')}</div>

@@ -17,6 +17,7 @@
     "build:webapp": "vite build --config webapp/vite.config.ts",
     "sim": "node scripts/sim.ts",
     "smoke:groq": "node --env-file-if-exists=.env scripts/smoke-groq.ts",
+    "smoke:composio": "node --env-file-if-exists=.env scripts/smoke-composio.ts",
     "admin": "node --env-file-if-exists=.env scripts/admin.ts"
   },
   "dependencies": {
@@ -36,6 +37,7 @@
     "micromark-extension-gfm": "3.0.0",
     "opusscript": "0.1.1",
     "pino": "10.3.1",
+    "playwright": "1.63.0",
     "telegram-md-entities": "0.6.0",
     "unpdf": "1.8.1",
     "zod": "4.6.5"

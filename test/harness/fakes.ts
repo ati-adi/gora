@@ -13,10 +13,11 @@ import type {
   ReminderModule, Renderer, ReplyChannel, RoundOutcome, RunRow, RunsRepo, SafeFetch, Scheduler, SearchCapability, SentRef, Services, SpeechToText, SurfacesModule, Surface, TelegramFiles, BusinessModule,
   TelegramModule, TelegramModuleOptions, TgLinkRow, TgLinks, ToolCallRow, ToolCtx, ToolDefinitions, ToolExecutor, ToolkitId, ToolkitState, ToolRegistry, ToolSpec, ToolsetId, TopicManager,
   TrustedTargetService, TrustModule, TtsCapability, UntrustedWrapper, UserRow, UserSettings, UsersRepo, VisionCapability, WeatherProvider,
-  BehaviourModule, Embedder, ProactiveDecision, ProactivePolicy, ProfileCard, ProfileService, ProfileView, SignalsService, StyleHints, UserId,
+  BehaviourModule, BrowserModule, GroupChattiness, GroupModule, GroupObservedMessage, GroupParticipation, GroupPolicyView, Embedder, ProactiveDecision, ProactivePolicy, ProfileCard, ProfileService, ProfileView, SignalsService, StyleHints, UserId,
 } from '../../src/contracts/index.ts';
 import type { BetaContentBlockParam, BetaToolResultBlockParam, BetaToolUnion } from '../../src/contracts/llm.ts';
 import { TOOLKIT_IDS } from '../../src/contracts/tools.ts';
+import { GROUP_CHIME_KINDS } from '../../src/contracts/groups.ts';
 import { uiLang } from '../../src/contracts/i18n.ts';
 import { ZERO_USAGE } from '../../src/contracts/llm.ts';
 import { canonicalJson } from '../../src/kernel/canonicalJson.ts';
@@ -25,6 +26,7 @@ import { newId, ulid } from '../../src/kernel/ids.ts';
 import { createCallbackRegistry } from '../../src/kernel/registries.ts';
 import { escapeAttr, neutralizeReservedTags } from '../../src/kernel/tags.ts';
 import { TEST_BOT_INFO, TEST_TOKEN } from './fakeTelegram.ts';
+import { FakeBrowser } from './fakeBrowser.ts';
 import { createHashEmbedder } from '../../src/capabilities/embedder.ts';
 export { seededRandom } from '../../src/kernel/random.ts';
 
@@ -277,13 +279,15 @@ export interface FakeCapabilities extends Capabilities {
   stt: FakeSTT; weather: FakeWeather; fx: FakeFx; geo: FakeGeo; safeFetch: FakeSafeFetch; codeFiles: FakeCodeFiles; media: FakeMediaIngest;
   search: FakeSearch; vision: FakeVision; pdfText: FakePdfText; tts: FakeTts; guard: FakeGuard; llmSentinel: FakeLlmSentinel; location: FakeLocation;
   embedder: FakeEmbedder;
+  /** s07: scripted sites (test/harness/fakeBrowser.ts). */
+  browser: FakeBrowser;
 }
 /** The provider factory for tests: every capability faked. `now` drives the location expiry (defaults to 0 = never expires in practice). */
 export function createFakeCapabilities(now?: () => number): FakeCapabilities {
   return {
     stt: new FakeSTT(), weather: new FakeWeather(), fx: new FakeFx(), geo: new FakeGeo(), safeFetch: new FakeSafeFetch(), codeFiles: new FakeCodeFiles(), media: new FakeMediaIngest(),
     search: new FakeSearch(), vision: new FakeVision(), pdfText: new FakePdfText(), tts: new FakeTts(), guard: new FakeGuard(), llmSentinel: new FakeLlmSentinel(),
-    location: new FakeLocation(now), embedder: new FakeEmbedder(),
+    location: new FakeLocation(now), embedder: new FakeEmbedder(), browser: new FakeBrowser([], now ?? (() => 0)),
   };
 }
 
@@ -543,6 +547,12 @@ export function createMemoryCoreRepos(clock: Clock): CoreRepos {
         .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
         .slice(0, o?.limit ?? 50)
         .map(clone),
+    listByChat: (tgChatId, o) =>
+      [...convs.values()]
+        .filter((c) => c.tgChatId === tgChatId && (!o?.kind || c.kind === o.kind) && (!o?.status || c.status === o.status))
+        .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+        .slice(0, o?.limit ?? 200)
+        .map(clone),
   };
 
   // ── messages (+ blobs)
@@ -778,7 +788,7 @@ export function createFakeQuotas(clock: Clock): FakeQuotas {
   const refusals = new Map<string, number>();
   const cooldowns = new Map<string, number>();
   const counters: FakeQuotas['counters'] = new Map();
-  const kinds: QuotaKind[] = ['turn', 'web_search', 'stt_seconds', 'file', 'guest_answer', 'mission', 'watcher', 'cost_micros'];
+  const kinds: QuotaKind[] = ['turn', 'web_search', 'stt_seconds', 'file', 'guest_answer', 'mission', 'watcher', 'cost_micros', 'browser'];
   const usedOf = (userId: string, k: QuotaKind) => {
     const c = k === 'mission' || k === 'watcher' ? counters.get(k) : undefined;
     return c ? c(userId) : (used.get(`${userId}:${k}`) ?? 0);
@@ -1564,6 +1574,8 @@ export const NOOP_FACTORIES: Factories = {
   createMissionModule: (): MissionModule => ({ missions: notImplemented('missions'), watchers: notImplemented('watchers') }),
   createProfileService: () => createFakeProfileService(),
   createBehaviourModule: (): BehaviourModule => ({ signals: createRecordingSignals(), policy: createFakePolicy() }),
+  createGroupModule: (): GroupModule => ({ participation: createRecordingGroupAgent() }),
+  createBrowserModule: (): BrowserModule => ({ tasks: { active: () => null, forMission: () => null, forConversation: () => null, list: () => [] } }),
   createAgentModule: (): AgentModule => ({
     runner: createFakeRunner(),
     conversations: notImplemented('conversations'),
@@ -1671,4 +1683,51 @@ export function createFakePolicy(): ProactivePolicy & { ticks: number[]; decisio
     explain: () => undefined,
   };
   return f;
+}
+
+// ───────────────────────── s07 fakes (spec 07)
+
+/**
+ * A recording GroupParticipation (mention-only by default: `readsAll` false). Set `.reads = true` to exercise the
+ * surface's participant path; `.named` is the name-address regex used by `addressedByName`.
+ */
+export function createRecordingGroupAgent(): GroupParticipation & {
+  reads: boolean; named: RegExp; observed: GroupObservedMessage[]; joins: Array<{ chatId: number; lang?: string }>;
+  reactions: Array<{ chatId: number; tgMessageId: number; emoji: readonly string[] }>; botMessages: Array<{ chatId: number; tgMessageId: number; text: string }>;
+  chattiness: Map<number, GroupChattiness>; purged: Array<{ chatId: number; reason: string }>; catchupText: string | null;
+} {
+  const policy = (chatId: number): GroupPolicyView => ({
+    chatId, chattiness: fake.chattiness.get(chatId) ?? 'normal', threshold: 1,
+    arms: Object.fromEntries(GROUP_CHIME_KINDS.map((k) => [k, { alpha: 1, beta: 3 }])) as GroupPolicyView['arms'],
+    lastChimeAt: null, chimesToday: 0, tz: null, readsAll: fake.reads,
+  });
+  const fake = {
+    reads: false,
+    named: /^\s*(гора|gora)\b/i,
+    observed: [] as GroupObservedMessage[],
+    joins: [] as Array<{ chatId: number; lang?: string }>,
+    reactions: [] as Array<{ chatId: number; tgMessageId: number; emoji: readonly string[] }>,
+    botMessages: [] as Array<{ chatId: number; tgMessageId: number; text: string }>,
+    chattiness: new Map<number, GroupChattiness>(),
+    purged: [] as Array<{ chatId: number; reason: string }>,
+    catchupText: null as string | null,
+    readsAll: () => fake.reads,
+    onJoin: async (chatId: number, o: { lang?: string }) => void fake.joins.push({ chatId, ...(o.lang ? { lang: o.lang } : {}) }),
+    observe: async (m: GroupObservedMessage) => void fake.observed.push(m),
+    edits: [] as Array<{ chatId: number; tgMessageId: number; text: string }>,
+    onEdited: async (p: { chatId: number; tgMessageId: number; text: string }) => void fake.edits.push({ chatId: p.chatId, tgMessageId: p.tgMessageId, text: p.text }),
+    onReaction: (p: { chatId: number; tgMessageId: number; emoji: readonly string[] }) => void fake.reactions.push({ chatId: p.chatId, tgMessageId: p.tgMessageId, emoji: p.emoji }),
+    onBotMessage: (p: { chatId: number; tgMessageId: number; text: string }) => void fake.botMessages.push({ chatId: p.chatId, tgMessageId: p.tgMessageId, text: p.text }),
+    setChattiness: (chatId: number, level: GroupChattiness) => {
+      fake.chattiness.set(chatId, level);
+      return level;
+    },
+    addressedByName: (text: string) => fake.named.test(text),
+    chattinessFromWords: () => null,
+    catchup: async () => fake.catchupText,
+    policy,
+    purge: async (chatId: number, reason: 'forget' | 'left') => void fake.purged.push({ chatId, reason }),
+    recentContext: (): string | null => null,
+  };
+  return fake;
 }

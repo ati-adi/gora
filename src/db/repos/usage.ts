@@ -4,9 +4,10 @@ import type { Db } from '../../contracts/storage.ts';
 import { num } from './common.ts';
 
 export type UsageColumn =
-  | 'turns' | 'web_searches' | 'stt_seconds' | 'files' | 'guest_answers' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cost_micros' | 'nudges_sent' | 'refusals';
+  | 'turns' | 'web_searches' | 'stt_seconds' | 'files' | 'guest_answers' | 'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cost_micros' | 'nudges_sent' | 'refusals'
+  | 'browser_tasks'; // s07 (004)
 export const USAGE_COLUMNS: readonly UsageColumn[] = Object.freeze([
-  'turns', 'web_searches', 'stt_seconds', 'files', 'guest_answers', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cost_micros', 'nudges_sent', 'refusals',
+  'turns', 'web_searches', 'stt_seconds', 'files', 'guest_answers', 'input_tokens', 'output_tokens', 'cache_read_tokens', 'cost_micros', 'nudges_sent', 'refusals', 'browser_tasks',
 ]);
 export type UsageDay = Record<UsageColumn, number>;
 const ZERO: Readonly<UsageDay> = Object.freeze(Object.fromEntries(USAGE_COLUMNS.map((c) => [c, 0])) as UsageDay);

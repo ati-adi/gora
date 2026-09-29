@@ -140,6 +140,11 @@ export interface ConversationsRepo {
   closedEpochsOlderThan(ms: Ms): Array<{ conversationId: string; epoch: number }>;
   /** WP0 addition (Mini App "Forget everything from a chat"): the user's conversations, newest activity first (default limit 50). */
   listByUser(userId: UserId, o?: { status?: ConversationRow['status']; limit?: number }): ConversationRow[];
+  /**
+   * s07 lead addition (spec 07 C3 retention / "/forget всё"): the conversations of one Telegram chat (every forum
+   * thread), optionally of one kind, newest activity first.
+   */
+  listByChat(tgChatId: number, o?: { kind?: ConversationRow['kind']; status?: ConversationRow['status']; limit?: number }): ConversationRow[];
 }
 export interface MessagesRepo {
   append(conversationId: string, epoch: number, rows: Array<{ role: MessageRow['role']; kind: MessageKind; content: BetaMessageParam; runId?: string; stopReason?: string; hasClientToolUse?: boolean }>): number[]; // one tx; runs the injected grammar validator; returns seqs
@@ -285,6 +290,10 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = Object.freeze([
   { table: 'oauth_states', where: `user_id = :userId` },
   { table: 'anthropic_files', where: `user_id = :userId` },
   { table: 'location_state', where: `user_id = :userId` },
+  // s07 tables (004): CAL pending connect links, BR browser tasks, GR the member's own messages in groups (by Telegram id)
+  { table: 'integration_links', where: `user_id = :userId` },
+  { table: 'browser_tasks', where: `user_id = :userId` },
+  { table: 'group_messages', where: `from_tg_id = :tgUserId` },
   // friend-mode tables (003): memory-derived first (fact_embeddings references memory_facts), then behaviour
   { table: 'fact_embeddings', where: `scope = ${USCOPE} OR user_id = :userId` },
   { table: 'user_profile', where: `user_id = :userId` },
@@ -327,3 +336,16 @@ export const USER_DATA_TABLES: readonly UserDataTable[] = Object.freeze([
   // step 6 — last
   { table: 'users', where: `id = :userId` },
 ] satisfies UserDataTable[]);
+
+/**
+ * s07 (spec 07 C3): the per-group deletion plan, keyed by `:chatId`. GroupParticipation.purge iterates it in order for
+ * '/forget all' in the group and for the bot-left purge (after the 7-day grace, with destroyOwner('grp:<chatId>')).
+ * group_policy is kept on 'forget' (chattiness is a setting, counters are reset) and deleted on 'left'.
+ * Group memory facts are not listed: they go through memory.forget (fingerprints) / the grp: DEK destruction.
+ */
+export interface GroupDataTable { table: string; where: string; /* uses :chatId */ keepOnForget?: boolean }
+export const GROUP_DATA_TABLES: readonly GroupDataTable[] = Object.freeze([
+  { table: 'group_messages', where: `chat_id = :chatId` },
+  { table: 'group_summaries', where: `chat_id = :chatId` },
+  { table: 'group_policy', where: `chat_id = :chatId`, keepOnForget: true },
+] satisfies GroupDataTable[]);

@@ -18,7 +18,19 @@ const CB = {
 export function createMissionModule(s: Services): MissionModule {
   const repo = createMissionRepo(() => s.db, () => s.crypto);
   const watchers = createWatcherCore(s, repo);
-  const core = createMissionCore(s, repo, { onFinished: (id) => watchers.finishForMission(id) });
+  const core = createMissionCore(s, repo, {
+    onFinished: (id, status) => {
+      watchers.finishForMission(id);
+      // s07: s.missionHooks (BR closes the task's browser context). Fire-and-forget; errors never fail the mission.
+      for (const h of s.missionHooks ?? []) {
+        try {
+          void Promise.resolve(h.onMissionEnded(id, status)).catch((e: unknown) => s.log.warn({ hook: h.name, err: String(e) }, 'mission hook failed'));
+        } catch (e) {
+          s.log.warn({ hook: h.name, err: String(e) }, 'mission hook failed');
+        }
+      }
+    },
+  });
   registerInternals(s, { ...core.internals, ...watchers.internals });
 
   s.scheduler.register('watcher_check', (job) => watchers.job(job));

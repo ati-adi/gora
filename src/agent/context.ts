@@ -20,10 +20,18 @@ const ALLOWED: Readonly<Record<Surface, ReadonlySet<ContextPart['key']>>> = {
   dm: new Set(['profile', 'capabilities', 'user_model', 'memories', 'open', 'events', 'budget', 'surface', 'location', 'quota', 'mission']),
   topic: new Set(['profile', 'capabilities', 'user_model', 'memories', 'open', 'events', 'budget', 'surface', 'location', 'quota', 'mission']),
   mission: new Set(['profile', 'capabilities', 'user_model', 'memories', 'open', 'events', 'budget', 'surface', 'location', 'quota', 'mission']),
+  // (browse missions use BROWSE_MISSION below)
   group: new Set(['surface', 'group', 'quota']),
   guest: new Set(['surface', 'quota']),
   biz_draft: new Set(['surface', 'profile', 'memories']), // 01 §10.2 step 4: top-8 user memories (read-only)
 };
+
+/**
+ * s07 lead fix (red team: "prompt injection can exfiltrate owner memory"): a browse mission reads untrusted web pages
+ * all the time, so it carries nothing about the owner beyond the task itself (goal/constraints are in the mission's
+ * seed): no profile card, no retrieved memories, no open items, no location.
+ */
+const BROWSE_MISSION: ReadonlySet<ContextPart['key']> = new Set(['capabilities', 'events', 'budget', 'surface', 'quota', 'mission']);
 
 const LIST_KEYS = new Set<ContextPart['key']>(['memories', 'events', 'group', 'mission']);
 const ORDER: ContextPart['key'][] = ['surface', 'profile', 'capabilities', 'user_model', 'memories', 'open', 'events', 'budget', 'location', 'quota', 'group', 'mission'];
@@ -72,7 +80,16 @@ export async function buildContextText(s: Services, conv: ConversationRow, run: 
   const core: string[] = [`now: ${isoWithOffset(now, tz)} (${WEEKDAYS[w.weekday] ?? ''}) tz=${tz} tz_source=${user?.tzSource ?? 'default'}`];
   const privateSurface = surface === 'dm' || surface === 'topic' || surface === 'mission';
   const parts = new Map<ContextPart['key'], string[]>();
-  const allowed = ALLOWED[surface];
+  let browse = false;
+  if (surface === 'mission') {
+    try {
+      // a task still 'starting' has no conversation bound yet: its mission's first run is already a browse run
+      browse = s.browserTasks.forConversation(conv.id) !== null || (conv.userId !== null && s.browserTasks.active(conv.userId)?.status === 'starting');
+    } catch {
+      browse = false;
+    }
+  }
+  const allowed = browse ? BROWSE_MISSION : ALLOWED[surface];
   for (const p of s.contextProviders) {
     if (!p.surfaces.includes(surface)) continue;
     let got: ContextPart[] = [];

@@ -62,7 +62,7 @@ function seedEveryTable(db: DatabaseSync, ids: Ids, now: number): string[] {
         // spec 05 (003): fact_embeddings.fact_id references memory_facts (seeded earlier in this reversed plan)
         if (nm === 'fact_id') return (db.prepare(`SELECT id FROM memory_facts WHERE user_id = ? LIMIT 1`).get(ids.userId) as { id: string } | undefined)?.id ?? 'm_missing';
         if (nm === 'connection_id') return 'bc_e2e';
-        if (nm === 'owner_tg_id' || nm === 'caller_tg_id' || nm === 'tg_user_id' || nm === 'user_chat_id') return ids.tgUserId;
+        if (nm === 'owner_tg_id' || nm === 'caller_tg_id' || nm === 'tg_user_id' || nm === 'user_chat_id' || nm === 'from_tg_id' /* s07 group_messages */) return ids.tgUserId;
         if (c.pk === 1 && pkCols === 1 && c.type.toUpperCase() === 'INTEGER') return undefined; // rowid alias
         if (!c.nn || c.d !== null) return undefined;
         if (/BLOB/i.test(c.type)) return new Uint8Array([1]);

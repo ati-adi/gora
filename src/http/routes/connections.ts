@@ -29,9 +29,11 @@ export function registerConnections(api: Api, s: Services): void {
     const { user } = auth(c);
     const now = s.clock.now();
     const status = safely(s, 'integrations.status', () => s.integrations.status(user.id), null);
+    const pending = new Set(safely(s, 'integrations.pendingLinks', () => s.integrations.pendingLinks?.(user.id) ?? [], []).map((l) => l.kind));
     return c.json({
       provider: safely(s, 'integrations.provider', () => s.integrations.provider?.name ?? null, null),
-      integrations: KINDS.map((k) => ({ kind: k, connected: status?.[k].connected ?? false, level: status?.[k].level ?? 'none' })),
+      // s07 B1: a connect link still being polled → the screen shows "waiting for the connection…"
+      integrations: KINDS.map((k) => ({ kind: k, connected: status?.[k].connected ?? false, level: status?.[k].level ?? 'none', pending: !(status?.[k].connected ?? false) && pending.has(k) })),
       grants: safely(s, 'grants.list', () => s.grants.list(user.id), []).filter((g) => g.expiresAt === null || g.expiresAt > now)
         .map((g) => ({ id: g.id, toolName: g.toolName, scope: g.scope, expiresAt: g.expiresAt })),
       trusted: trusted(user.id),

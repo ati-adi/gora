@@ -23,7 +23,10 @@ export interface ConversationService {
  * nothing reaches a transcript row without that wrapper.
  */
 export interface GoraEvent {
-  type: 'checkin' | 'brief' | 'nudge_do' | 'first_look' | 'mission_start' | 'continue' | 'context_rotated' | 'guest_continue' | 'me_question' | 'draft_business_reply' | 'retry';
+  type: 'checkin' | 'brief' | 'nudge_do' | 'first_look' | 'mission_start' | 'continue' | 'context_rotated' | 'guest_continue' | 'me_question' | 'draft_business_reply' | 'retry'
+    // s07: CAL resumes the owner's pending question after a connect completes (B2); BR resumes a parked browse mission
+    // after the owner's reply / a login-wall decision (A4).
+    | 'integration_connected' | 'browser_resume';
   ref?: string;
   body: string;
   untrusted?: Array<{ source: UntrustedSource; label: string; text: string }>;
@@ -86,6 +89,8 @@ export interface Triage {
 /** WP0 addition: optional last parameter of every SideCalls method (usage attribution + 03 R6 priority, default 'background'). */
 /** `signal` (review X1/F6): a job's lease loss or timeout aborts the side call's LLM request. */
 export type SideCallMeta = CallMeta & { priority?: Priority; signal?: AbortSignal };
+/** SideCalls.structured purposes: friend mode (spec 05) + s07 §C group participant (GR, src/groups/). */
+export type StructuredPurpose = 'consolidate' | 'compose' | 'judge' | 'group_summary' | 'group_facts' | 'group_judge' | 'group_compose' | 'group_catchup';
 export interface SideCalls {
   triage(i: { transcript: string; peerName: string; nowLocal: string; lang: string }, meta?: SideCallMeta): Promise<Triage | null>;
   extract(i: { inputs: Array<{ id: string; text: string }>; existing: Array<{ id: string; text: string }>; nowLocal: string; lang: string }, meta?: SideCallMeta): Promise<Extracted | null>;
@@ -97,5 +102,5 @@ export interface SideCalls {
    * src/behaviour/ 'compose' + 'judge'). Records usage (llm_calls purpose 'side') with `meta` like every side call;
    * null on a parse failure; TransientLlmError / AbortedError propagate. Priority defaults to 'background'.
    */
-  structured<T>(req: { purpose: 'consolidate' | 'compose' | 'judge'; system: string; user: string; schema: ZodType<T>; role?: 'fast' | 'main'; maxTokens?: number }, meta?: SideCallMeta): Promise<T | null>;
+  structured<T>(req: { purpose: StructuredPurpose; system: string; user: string; schema: ZodType<T>; role?: 'fast' | 'main'; maxTokens?: number }, meta?: SideCallMeta): Promise<T | null>;
 }

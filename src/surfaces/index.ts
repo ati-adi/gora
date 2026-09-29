@@ -142,6 +142,8 @@ export function createSurfaces(s: Services): SurfacesModule {
         }
         // Group transcripts (every thread), group memory and the title all live under 'grp:<chatId>' DEKs.
         s.crypto.destroyOwner(`grp:${chatId}`);
+        // spec 07 C3: the participant's stored lines, summary and policy go with the group (GROUP_DATA_TABLES)
+        await s.groupAgent.purge(chatId, 'left');
         surf.groups.forgetRow(chatId);
       }
     },

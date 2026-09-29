@@ -12,9 +12,9 @@
 // Phase 2 (start): handlers registered, ingress started, recovery, scheduler/outbox/dispatcher started.
 import { join } from 'node:path';
 import type { Hono } from 'hono';
-import type { Config } from './config.ts';
+import { configWarnings, type Config } from './config.ts';
 import type {
-  BusinessModule, CallbackRegistry, Clock, Db, Factories, IntegrationProvider, KeyStore, LlmTransport, Logger, Random, SentRef, Services, SurfacesModule, TelegramGateway, TelegramModule, TelegramModuleOptions, ToolSpec,
+  BrowserCapability, BusinessModule, CallbackRegistry, Clock, Db, Factories, IntegrationProvider, KeyStore, LlmTransport, Logger, Random, SentRef, Services, SurfacesModule, TelegramGateway, TelegramModule, TelegramModuleOptions, ToolSpec,
 } from './contracts/index.ts';
 import { KeyStoreError, keyStoreInitialized, openKeyStore } from './db/keystore.ts';
 import { createCrypto } from './db/crypto.ts';
@@ -34,6 +34,10 @@ import { TOOLS as REMINDER_TOOLS } from './reminders/tools.ts';
 import { TOOLS as MISSION_TOOLS } from './missions/tools.ts';
 import { TOOLS as SURFACE_TOOLS } from './surfaces/tools.ts';
 import { TOOLS as BUSINESS_TOOLS } from './surfaces/business/tools.ts';
+import { TOOLS as BROWSER_TOOLS } from './browser/tools.ts';
+import { TOOLS as GROUP_TOOLS } from './groups/tools.ts';
+import { createBrowserModule } from './browser/index.ts';
+import { createGroupModule } from './groups/index.ts';
 import { createCapabilities } from './capabilities/index.ts';
 import { createIntegrationService } from './integrations/index.ts';
 import { createMemoryService } from './memory/index.ts';
@@ -60,11 +64,11 @@ export const REAL_FACTORIES: Factories = {
   createStrings, openKeyStore, createCrypto, createCoreRepos, createLedger, createQuotaService, createPrivacyService,
   createLlmGovernance, createTransport, createCapabilities, createIntegrationService, createToolRegistry,
   createTrustModule, createMemoryService, createScheduler, createReminderModule, createProactiveModule, createMissionModule,
-  createProfileService, createBehaviourModule, createAgentModule, createTelegramModule, createBusinessModule, createSurfaces, createHttpApp,
+  createProfileService, createBehaviourModule, createGroupModule, createBrowserModule, createAgentModule, createTelegramModule, createBusinessModule, createSurfaces, createHttpApp,
 };
 
-/** Tool specs owned by WP4, WP6 and WP7 (contracts/tools.ts TOOL_FILES); WP5's registry adds its own. */
-export const EXTERNAL_TOOLS: readonly ToolSpec[] = Object.freeze([...TRUST_TOOLS, ...MEMORY_TOOLS, ...REMINDER_TOOLS, ...MISSION_TOOLS, ...SURFACE_TOOLS, ...BUSINESS_TOOLS]);
+/** Tool specs owned by WP4, WP6, WP7 and the s07 sets BR/GR (contracts/tools.ts TOOL_FILES); WP5's registry adds its own. */
+export const EXTERNAL_TOOLS: readonly ToolSpec[] = Object.freeze([...TRUST_TOOLS, ...MEMORY_TOOLS, ...REMINDER_TOOLS, ...MISSION_TOOLS, ...SURFACE_TOOLS, ...BUSINESS_TOOLS, ...BROWSER_TOOLS, ...GROUP_TOOLS]);
 
 export interface AppOptions {
   config: Config;
@@ -77,6 +81,8 @@ export interface AppOptions {
   /** Tests inject a ScriptedTransport; otherwise createTransport(cfg) picks anthropic / groq / demo. */
   transport?: LlmTransport;
   integrationProvider?: IntegrationProvider;
+  /** s07 (spec 07 A6): replaces caps.browser (tests pass test/harness/fakeBrowser.ts FakeBrowser). */
+  browser?: BrowserCapability;
   telegram?: Omit<TelegramModuleOptions, 'callbacks' | 'sentHooks'>;
   /** Replace individual factories (tests). */
   factories?: Partial<Factories>;
@@ -115,6 +121,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
   const fetchImpl = opts.fetchImpl ?? globalThis.fetch;
   const factories: Factories = { ...REAL_FACTORIES, ...opts.factories };
   const fallbacksUsed: string[] = [];
+  for (const w of configWarnings(cfg)) log.warn({ config: true }, w); // s07 B5
 
   /** Calls a factory; on NotBuiltError uses the configured fallback (test harness) or rethrows. */
   function make<K extends keyof Factories>(k: K, ...args: Parameters<Factories[K]>): ReturnType<Factories[K]> {
@@ -170,6 +177,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
     s.privacyHooks = [];
     s.contextProviders = [];
     s.runHooks = [];
+    s.missionHooks = []; // s07: factory-time registry (BR)
     const callbacks = createCallbackRegistry(log.child({ mod: 'callbacks' }));
     const sentHooks: NonNullable<TelegramModuleOptions['sentHooks']> = [];
     s.telegram = preGateway(callbacks, sentHooks);
@@ -184,7 +192,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
     s.rateGovernor = gov.governor;
     s.llmBudget = gov.budget;
     s.transport = opts.transport ?? make('createTransport', cfg, log.child({ mod: 'transport' }), s, { fetchImpl });
-    s.caps = make('createCapabilities', cfg, fetchImpl, s, { sentinelPolicy: LLM_SENTINEL_POLICY });
+    const caps = make('createCapabilities', cfg, fetchImpl, s, { sentinelPolicy: LLM_SENTINEL_POLICY });
+    s.caps = opts.browser ? { ...caps, browser: opts.browser } : caps;
     s.capabilities = s.caps;
     s.integrations = make('createIntegrationService', s, opts.integrationProvider, { fetchImpl });
     s.location = s.caps.location;
@@ -213,6 +222,8 @@ export async function createApp(opts: AppOptions): Promise<App> {
     const beh = make('createBehaviourModule', s); // spec 05 §C
     s.signals = beh.signals;
     s.proactivePolicy = beh.policy;
+    s.groupAgent = make('createGroupModule', s).participation; // spec 07 §C
+    s.browserTasks = make('createBrowserModule', s).tasks; // spec 07 §A (browse tasks run as missions)
     const agent = make('createAgentModule', s);
     s.runner = agent.runner;
     s.conversations = agent.conversations;
@@ -273,6 +284,7 @@ export async function createApp(opts: AppOptions): Promise<App> {
           await step('ingress', () => tg.stopIngress()); // webhook → 503, polling stops
           await step('scheduler', () => s.scheduler.stop());
           await step('runner', () => s.runner.shutdown(graceMs)); // streams aborted ('shutdown'), tools ≤ graceMs
+          await step('browser', () => withTimeout(s.caps.browser.closeAll(), 5_000, clock)); // s07: ephemeral contexts
           await step('dispatcher', () => tg.dispatcher.stop());
           await step('outbox', () => withTimeout(s.telegram.outbox.flush(), drainMs, clock));
           await step('outbox.stop', () => s.telegram.outbox.stop());

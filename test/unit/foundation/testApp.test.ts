@@ -16,7 +16,7 @@ describe('app.ts wiring', () => {
   it('wires every factory in the §4.4 table', () => {
     const names = Object.keys(REAL_FACTORIES).sort();
     expect(names).toEqual([
-      'createAgentModule', 'createBehaviourModule', 'createBusinessModule', 'createCapabilities', 'createCoreRepos', 'createCrypto', 'createHttpApp', 'createIntegrationService', 'createLedger', 'createLlmGovernance',
+      'createAgentModule', 'createBehaviourModule', 'createBrowserModule', 'createBusinessModule', 'createCapabilities', 'createCoreRepos', 'createCrypto', 'createGroupModule', 'createHttpApp', 'createIntegrationService', 'createLedger', 'createLlmGovernance',
       'createMemoryService', 'createMissionModule', 'createPrivacyService', 'createProactiveModule', 'createProfileService', 'createQuotaService', 'createReminderModule', 'createScheduler',
       'createStrings', 'createSurfaces', 'createTelegramModule', 'createToolRegistry', 'createTransport', 'createTrustModule', 'openKeyStore',
     ]);
@@ -59,7 +59,7 @@ describe('createTestApp()', () => {
       const health = await t.api('GET', '/healthz');
       expect(health.status).toBe(200);
       // migrations ran on the real temp gora.db
-      expect(t.s.db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+      expect(t.s.db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
 
       const got: string[] = [];
       t.app.tg.bot.on('message:text', (ctx) => void got.push(ctx.msg.text));

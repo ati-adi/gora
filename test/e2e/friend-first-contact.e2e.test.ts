@@ -81,7 +81,7 @@ describe('/start (05 A2)', () => {
 });
 
 describe('first contact without onboarding (05 A1/A3/A5/A6)', () => {
-  it('start, three messages, a time-dependent request, two days: no card except the one lazy tz button; consent desc-v1 once', async () => {
+  it('start, three messages, a time-dependent request, two days: no card except the one lazy tz button; consent desc-v1 once', { timeout: 60_000 }, async () => { // s07 gate: advances days; 12–13 s alone, slower under load
     const { app } = await friendApp();
     const s = app.s;
     await app.send(U.start());

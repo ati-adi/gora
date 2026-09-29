@@ -1,7 +1,9 @@
-// tools/impl/calendar.ts (WP5) — calendar_* (01 §6, F9). Own events without attendees: write_self + Undo; anything that
-// notifies other people (attendees, invite responses) asks; deletions ask with scope once and are never grantable.
+// tools/impl/calendar.ts (WP5, s07 CAL) — calendar_* (01 §6, F9). Own events without attendees: write_self + Undo;
+// anything that notifies other people (attendees, invite responses) asks; deletions ask with scope once and are never
+// grantable. Not connected (spec 07 B2): the tool sends the one-line Connect card itself (with this run's conversation
+// as the resume target) and tells the model to say one short line — the question resumes after "Готово ✓".
 import { z } from 'zod';
-import type { ApprovalDiff, CalendarApi, CalEvent, CalEventInput, Classification, Ms, Target, ToolCtx, ToolOutput, ToolSpec, UserId } from '../../contracts/index.ts';
+import type { ApprovalDiff, CalendarApi, CalEvent, CalEventInput, Classification, IntegrationService, Ms, Target, ToolCtx, ToolOutput, ToolSpec, UserId } from '../../contracts/index.ts';
 import { AbortedError, errorMessage } from '../../kernel/errors.ts';
 import { formatDisplay, isoWithOffset, parseLocal, wallTimeOf, zonedToInstant } from '../../kernel/timeMath.ts';
 import { zEmail, zLocal, zTz } from '../schema.ts';
@@ -20,7 +22,20 @@ function calOf(ctx: ToolCtx): { userId: UserId; api: CalendarApi } | null {
   const api = ctx.services.integrations.calendar(userId);
   return api ? { userId, api } : null;
 }
-const notConnected = (): ToolOutput<never> => toolError('NOT_CONNECTED', 'Google Calendar is not connected; call integration_connect');
+/** B2: the owner in a DM/topic gets the Connect card right here (the service dedupes it per chat), no extra model round. */
+async function notConnected(ctx: ToolCtx): Promise<ToolOutput<never>> {
+  const userId = ownerOf(ctx);
+  if (userId && ctx.scope?.kind === 'user' && (ctx.surface === 'dm' || ctx.surface === 'topic')) {
+    const chat: Parameters<IntegrationService['sendConnectCard']>[2] = { chatId: ctx.chat.chatId, ...(ctx.chat.threadId !== undefined ? { threadId: ctx.chat.threadId } : {}), resumeConversationId: ctx.conversationId };
+    try {
+      await ctx.services.integrations.sendConnectCard(userId, 'gcal', chat);
+      return toolError('NOT_CONNECTED', 'Google Calendar is not connected. A Connect button was just sent: say ONE short line and stop. The question resumes automatically after the owner connects.');
+    } catch (e) {
+      ctx.log.warn({ tool: 'calendar', err: errorMessage(e) }, 'connect card failed');
+    }
+  }
+  return toolError('NOT_CONNECTED', 'Google Calendar is not connected; call integration_connect');
+}
 
 function localToMs(local: string, tz: string): Ms | null {
   const w = parseLocal(local);
@@ -42,7 +57,7 @@ function eventView(e: CalEvent, lang: string) {
 }
 async function withApi<T>(ctx: ToolCtx, tool: string, f: (c: { userId: UserId; api: CalendarApi }) => Promise<ToolOutput<T>>): Promise<ToolOutput<T>> {
   const c = calOf(ctx);
-  if (!c) return notConnected();
+  if (!c) return notConnected(ctx);
   try {
     return await f(c);
   } catch (e) {
@@ -51,6 +66,7 @@ async function withApi<T>(ctx: ToolCtx, tool: string, f: (c: { userId: UserId; a
     ctx.log.warn({ tool, err: msg }, 'calendar call failed');
     if (e instanceof OutcomeUnknownError) throw e; // the executor reconciles; never a definite "failed"
     if (/not supported by provider/i.test(msg)) return toolError('NOT_SUPPORTED', 'not supported by provider');
+    if (/integrations misconfigured/i.test(msg)) return toolError('INTEGRATIONS_MISCONFIGURED', 'the calendar is unavailable right now (server configuration); tell the user briefly');
     if (/not found/i.test(msg)) return toolError('NOT_FOUND', 'event not found');
     return toolError('CALENDAR_FAILED', 'the calendar call failed; tell the user');
   }
@@ -336,7 +352,7 @@ const updateTool: ToolSpec<UpdateIn> = {
       if (!prev) return toolError('NOT_FOUND', 'event not found; list events to get its id');
       // Auto-run as the owner's own event (write_self, no card), but it now involves other people: never edit it
       // silently. The memo now holds the fresh version, so calling again classifies it send_external (ask).
-      const approved = ctx.idemKey.startsWith('pa:');
+      const approved = ctx.approvedAction !== undefined;
       if (!approved && seen && selfOnly(seen) && !selfOnly(prev)) {
         return toolError('NEEDS_APPROVAL', 'this event now has other attendees, so changing it notifies them; call calendar_update_event again to ask the owner');
       }

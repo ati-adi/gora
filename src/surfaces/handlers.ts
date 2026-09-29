@@ -28,6 +28,13 @@ export interface HandlerDeps {
 export function registerSurfaceHandlers(surf: Surf, bot: Bot, d: HandlerDeps): void {
   const { s } = surf;
   surf.bot = bot;
+  // spec 07 C1: read getMe().can_read_all_group_messages at boot — the group participant logs the BotFather step once
+  // when privacy mode is ON (mention-only fallback)
+  try {
+    s.groupAgent.readsAll();
+  } catch {
+    /* a fake without the check */
+  }
   const safe =
     (name: string, fn: (ctx: Context, next: NextFunction) => Promise<void>) =>
     async (ctx: Context, next: NextFunction): Promise<void> => {
@@ -65,6 +72,12 @@ export function registerSurfaceHandlers(surf: Surf, bot: Bot, d: HandlerDeps): v
     if (!r || !r.user) return;
     const emoji = (x: typeof r.new_reaction) => x.filter((e) => e.type === 'emoji').map((e) => (e as { emoji: string }).emoji);
     const added = emoji(r.new_reaction).filter((e) => !emoji(r.old_reaction).includes(e));
+    // spec 07 C4 (GR): a member's reaction in a group → the chime-in bandit (Telegram delivers group reactions only when
+    // the bot is an administrator; otherwise the group learns from replies and silence alone)
+    if (r.chat.type === 'group' || r.chat.type === 'supergroup') {
+      if (added.length) s.groupAgent.onReaction({ chatId: r.chat.id, tgMessageId: r.message_id, fromTgId: r.user.id, emoji: added, at: r.date * 1000 });
+      return;
+    }
     // spec 05 C1 (friend foundation): a reaction by the owner in their own DM → behaviour signals (the emoji only)
     if (r.chat.type === 'private' && r.chat.id === r.user.id && added.length) {
       const me = s.repos.users.getByTg(r.user.id);
@@ -117,8 +130,11 @@ export function registerSurfaceHandlers(surf: Surf, bot: Bot, d: HandlerDeps): v
   }));
   pm.on('edited_message', safe('dm_edit', (ctx) => d.dm.onEdited(ctx)));
 
-  // ── groups: only mentions, replies to Gora and Gora's commands are processed (the rest is ignored, never stored)
+  // ── groups: only mentions, replies to Gora, name-addresses and Gora's commands are answered. Privacy mode ON: the rest is
+  // ignored and never stored; OFF (spec 07 C3): the rest (text, captions, voice transcripts) is observed, not answered.
   bot.chatType(['group', 'supergroup']).on('message', safe('group', async (ctx) => {
     await d.group.onGroupMessage(ctx);
   }));
+  // s07 lead fix: in reads-all mode the stored copy follows a member's edit
+  bot.chatType(['group', 'supergroup']).on('edited_message', safe('group_edit', (ctx) => d.group.onGroupEdited(ctx)));
 }

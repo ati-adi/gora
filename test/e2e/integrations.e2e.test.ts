@@ -1,10 +1,10 @@
-// 01 §15.2 WP5 integrations e2e: not_connected → Connect card; fake connect callback → permission chips → first_look
-// posts "I read: …" and exactly one card. Real WP5 service + FakeIntegrationProvider; the rest is whatever is built.
+// 01 §15.2 WP5 integrations e2e, updated for spec 07 B2 (s07 CAL): not_connected → a one-line Connect card; fake connect
+// callback → "Done ✓" (chips live in the Mini App) → the pending question resumes. Real service + FakeIntegrationProvider.
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReplyChannel, UserRow } from '../../src/contracts/index.ts';
 import { FakeIntegrationProvider } from '../../src/integrations/fake.ts';
 import { createTestApp, type TestApp } from '../harness/testApp.ts';
-import { turn } from '../harness/scriptedTransport.ts';
+import { say } from '../harness/scriptedTransport.ts';
 
 let t: TestApp;
 afterEach(async () => {
@@ -30,50 +30,54 @@ const keyboards = () =>
     .map((c) => ({ text: String(c.payload.text ?? c.payload.rich_message?.markdown ?? ''), buttons: ((c.payload.reply_markup?.inline_keyboard ?? []) as Btn[][]).flat(), id: (c.result as { message_id?: number } | undefined)?.message_id }));
 
 describe('integrations e2e', () => {
-  it('not_connected → Connect card → fake connect → chips → first_look "I read: …" and exactly one card', async () => {
+  // s07 (spec 07 B2): one-line Connect card, "Done ✓" without chips (they live in the Mini App), then the pending question
+  // resumes (GoraEvent integration_connected) instead of first_look's "I read: …" + card.
+  it('not_connected → one-line Connect card (deduped) → fake connect → "Done ✓" → the question resumes; legacy chips still work', async () => {
     const provider = new FakeIntegrationProvider({ now: () => Date.UTC(2026, 8, 28, 9, 0) });
     t = await createTestApp({ integrations: provider });
     expect(t.s.integrations.provider).toBe(provider);
     const u = addUser(t);
     expect(t.s.integrations.status(u.id).gmail).toEqual({ connected: false, level: 'none' });
 
-    // 1. a Gmail tool without a connection → Sentinel not_connected → the Connect card (url button)
+    // 1. a Gmail tool without a connection → Sentinel not_connected → the Connect card (url button), one line
     const r = await round(u, 'gmail_search', { query: 'invoice' }, 'toolu_ic1');
     expect(String(r.results[0]!.content)).toMatch(/not_connected|connect/i);
+    // the model then also calls integration_connect in the same breath: no second card
+    await round(u, 'integration_connect', { integration: 'gmail', reason: 'to find the invoice' }, 'toolu_ic1b');
     await t.settle();
-    const card = keyboards().find((k) => k.buttons.some((b) => b.url?.includes('/dev/fake-connect?state=')));
-    expect(card, 'connect card').toBeDefined();
-    const url = new URL(card!.buttons.find((b) => b.url)!.url!);
+    const cards = keyboards().filter((k) => k.buttons.some((b) => b.url?.includes('/dev/fake-connect?state=')));
+    expect(cards, 'connect card').toHaveLength(1);
+    expect(cards[0]!.text).not.toContain('\n');
+    expect(cards[0]!.buttons.map((b) => b.text)).toEqual(['Connect Gmail']);
+    const url = new URL(cards[0]!.buttons[0]!.url!);
     expect(url.origin).toBe('https://gora.test');
 
-    // 2. the fake consent screen completes the pending oauth state → "Connected ✓" + permission chips
+    // 2. the fake consent screen completes the pending oauth state → "Done ✓" (no chips) → the pending question resumes
+    t.llm.push(say('You have one invoice email from Kaspi.'));
     const res = await t.s.integrations.devConnect(url.searchParams.get('state')!);
     expect(res.status).toBe(200);
-    expect((await t.s.integrations.devConnect(url.searchParams.get('state')!)).status).toBe(400); // single use
+    const again = await t.s.integrations.devConnect(url.searchParams.get('state')!); // single use: nothing happens twice
+    expect(again.status).toBe(200);
+    expect(await again.text()).toContain('already connected');
     await t.settle();
     expect(t.s.integrations.status(u.id).gmail).toEqual({ connected: true, level: 'draft' });
-    const chips = keyboards().find((k) => k.text.startsWith('Connected ✓'))!;
-    expect(chips.buttons.map((b) => b.text)).toEqual(['Read only', 'Read + drafts ✓', 'Can propose sends']);
+    const doneMsgs = keyboards().filter((k) => k.text.startsWith('Done ✓'));
+    expect(doneMsgs.map((k) => k.text)).toEqual(['Done ✓ Gmail is connected.']);
+    expect(doneMsgs[0]!.buttons).toHaveLength(0);
+    expect(keyboards().some((k) => k.buttons.some((b) => b.callback_data?.startsWith('cn:')))).toBe(false);
+    expect(JSON.stringify(t.llm.requests.at(-1)!.messages)).toContain('integration_connected');
+    expect(keyboards().some((k) => k.text.includes('one invoice email'))).toBe(true);
 
-    // 3. tap "Can propose sends" (cn:gmail:act)
-    await t.tap(chips.buttons[2]!.callback_data!, { messageId: chips.id! });
+    // 3. no first_look on top of the resumed answer
+    await t.advance(60_000);
+    expect(t.tg.calls.some((c) => /^(🔎|👀)/.test(String(c.payload.text ?? '')))).toBe(false);
+
+    // 4. a chip tap from an older message (cn:gmail:act) still sets the level
+    await t.tap(t.s.telegram.codec.encode('cn', ['gmail', 'act'], u.tgUserId));
     expect(t.s.integrations.status(u.id).gmail.level).toBe('act');
     expect(t.s.ledger.list(u.id, { limit: 20 }).map((e) => e.kind)).toEqual(expect.arrayContaining(['connection', 'permission_change']));
 
-    // 4. first_look (≤ 60 s): "I read: …" then an event run that surfaces exactly one card
-    const inbox = await provider.mail(u.id, 'x').search({ query: 'newer_than:2d', maxResults: 50 });
-    t.llm.push(turn().toolUse('gmail_create_draft', { to: ['anna@example.com'], subject: 'Re: Contract review', body: 'Hi Anna, Thursday 15:00 works for me.' }, 'toolu_fl1'));
-    t.llm.push(turn().text('I drafted a reply to Anna — want me to send it?'));
-    await t.advance(60_000);
-    const readLine = t.tg.calls.find((c) => String(c.payload.text ?? '').startsWith('🔎 I read:'));
-    expect(readLine?.payload.text).toBe(`🔎 I read: ${inbox.length} email headers from the last 48 h — nothing else.`);
-    const firstLookCards = keyboards().filter((k) => k.buttons.length > 0 && !k.text.startsWith('Connected') && !k.buttons.some((b) => b.url));
-    expect(firstLookCards).toHaveLength(1);
-    // the recipient came from an email (tainted first-look run) → an approval card, nothing written yet
-    expect(firstLookCards[0]!.buttons.some((b) => b.callback_data?.startsWith('a1:'))).toBe(true);
-    expect(provider.drafts(u.id)).toHaveLength(0);
-
-    // 5. now connected: the same tool runs and its output is email-tainted
+    // 5. now connected: the same tool runs
     const ok = await round(u, 'gmail_search', { query: 'invoice' }, 'toolu_ic2');
     expect(String(ok.results[0]!.content)).toContain('invoice');
   });

@@ -19,6 +19,7 @@ import { createPdfText } from './pdfText.ts';
 import { createFxProvider, createGeoProvider, createWeatherProvider, type HttpDeps } from './providers.ts';
 import { createSafeFetch } from './safeFetch.ts';
 import { createNoStt, createOpenAiStt, createPlaceholderStt } from './stt.ts';
+import { createBrowserCapability } from '../browser/capability.ts';
 
 export interface CapabilityOptions {
   /**
@@ -117,5 +118,7 @@ export function createCapabilities(cfg: Config, fetchImpl: typeof fetch, s: Serv
         : cfg.providers.embeddings === 'fake'
           ? createHashEmbedder()
           : createNoEmbedder(),
+    // spec 07 A1 (lazy: Chromium launches on the first openSession, never at boot); tests inject FakeBrowser via AppOptions.browser
+    browser: createBrowserCapability(cfg, { clock, log }),
   };
 }

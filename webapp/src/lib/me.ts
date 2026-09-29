@@ -13,6 +13,8 @@ export interface Me {
   bot: { username: string | null };
   provider: { id: string; transport: string };
   session: { ageSec: number; startParam: string | null };
+  /** spec 07 C6: https://t.me/<bot>?startgroup=g&admin= (no admin rights requested); null when groups are off. */
+  addToGroupUrl?: string | null;
   now: number;
 }
 

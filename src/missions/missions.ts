@@ -50,7 +50,7 @@ export interface MissionCore {
   stopTimers(missionIds: readonly string[]): void;
 }
 
-export function createMissionCore(s: Services, repo: MissionRepo, hooks: { onFinished(missionId: string): void }): MissionCore {
+export function createMissionCore(s: Services, repo: MissionRepo, hooks: { onFinished(missionId: string, status: 'done' | 'failed' | 'cancelled'): void }): MissionCore {
   const statusLines = new Map<string, string>();
   const timers = new Map<string, unknown>();
   const lastEditAt = new Map<string, Ms>();
@@ -290,7 +290,7 @@ export function createMissionCore(s: Services, repo: MissionRepo, hooks: { onFin
       if (!m) return;
       if (!repo.setMissionStatus(m.id, outcome, OPEN_MISSION_STATUSES, now())) return;
       const u = s.repos.users.getById(m.userId);
-      hooks.onFinished(m.id);
+      hooks.onFinished(m.id, outcome);
       statusLines.delete(m.id);
       s.ledger.append({ userId: m.userId, actor: 'agent', kind: 'mission', summary: `Mission ${m.id} ${outcome}`, detail: { missionId: m.id, outcome, spentMicros: m.spentMicros } });
       if (!u) return;
@@ -314,7 +314,7 @@ export function createMissionCore(s: Services, repo: MissionRepo, hooks: { onFin
       const conv = s.repos.conversations.get(m.conversationId);
       const run = conv?.activeRunId ? s.repos.runs.get(conv.activeRunId) : undefined;
       if (!repo.setMissionStatus(m.id, 'cancelled', OPEN_MISSION_STATUSES, now())) return;
-      hooks.onFinished(m.id);
+      hooks.onFinished(m.id, 'cancelled');
       statusLines.delete(m.id);
       if (run?.state === 'parked') {
         for (const token of run.wakeOn) {

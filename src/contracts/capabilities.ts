@@ -3,6 +3,7 @@ import type { Message } from 'grammy/types';
 import type { Ms, UserId } from './common.ts';
 import type { BetaContentBlockParam, CallMeta, Priority } from './llm.ts';
 import type { DekId, InputKind } from './storage.ts';
+import type { BrowserCapability } from './browser.ts';
 
 export interface SpeechToText {
   readonly name: string;
@@ -83,4 +84,6 @@ export interface Capabilities {
   location: LocationService;
   /** Friend-mode addition (spec 05 B2). */
   embedder: Embedder;
+  /** s07 addition (spec 07 A1): headless Chromium (PlaywrightBrowser) or 'none'; tests inject FakeBrowser. */
+  browser: BrowserCapability;
 }

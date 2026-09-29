@@ -168,10 +168,11 @@ describe('toolkits (03 R3)', () => {
     const whole = estimateTokens(JSON.stringify(createToolRegistry(GROQ, REAL_EXTERNAL).subset('FULL', []).definitions));
     expect(whole).toBeGreaterThan(mineTokens);
     expect(whole).toBeLessThanOrEqual(1100);
-    // What Groq actually receives (function wrappers, ~9 tokens/tool more): measured 1,182 after the review trims (was 1,199).
+    // What Groq actually receives (function wrappers, ~9 tokens/tool more): measured 1,182 after the review trims (was 1,199);
+    // s07: 1,190 with the 'browser' toolkit in use_toolkit's description and enum.
     const defs = createToolRegistry(GROQ, REAL_EXTERNAL).subset('FULL', []).definitions;
     const wire = translateRequest({ model: 'groq:x', max_tokens: 100, system: [], messages: [], tools: defs } as unknown as MainRequest, { mediaText: () => '', maxOutputTokens: 1000 });
-    expect(estimateTranslated({ messages: [], tools: wire.tools })).toBeLessThanOrEqual(1185);
+    expect(estimateTranslated({ messages: [], tools: wire.tools })).toBeLessThanOrEqual(1192);
   });
 
   it('the registry builds with every real external TOOLS array (no duplicates, known names)', () => {

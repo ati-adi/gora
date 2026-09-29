@@ -62,7 +62,7 @@ export function createExecutor(s: Services, d: Deps) {
   };
   const updateCall = (id: string, patch: Partial<Omit<ToolCallRow, 'toolUseId'>>) => safe(() => s.repos.runs.updateToolCall(id, patch), undefined);
 
-  const buildCtx = (p: { run: RunRow | null; conv: ConversationRow | null; userId: UserId | null; toolUseId: string; idemKey: string; signal: AbortSignal; pushed: Effect[]; taint: ReadonlySet<TaintSource>; priority: Priority; chat?: { chatId: number; threadId?: number } }): ToolCtx => {
+  const buildCtx = (p: { run: RunRow | null; conv: ConversationRow | null; userId: UserId | null; toolUseId: string; idemKey: string; signal: AbortSignal; pushed: Effect[]; taint: ReadonlySet<TaintSource>; priority: Priority; chat?: { chatId: number; threadId?: number }; approvedPendingActionId?: string }): ToolCtx => {
     const user = p.userId ? safe(() => s.repos.users.getById(p.userId!), undefined) : undefined;
     const conv = p.conv;
     const rr = p.run?.replyRef;
@@ -81,6 +81,7 @@ export function createExecutor(s: Services, d: Deps) {
       },
       ...(rr?.missionId !== undefined ? { missionId: rr.missionId } : {}),
       taint: p.taint, signal: p.signal, effects: { push: (e) => void p.pushed.push(e) }, services: s, log: s.log, idemKey: p.idemKey, priority: p.priority,
+      ...(p.approvedPendingActionId ? { approvedAction: { pendingActionId: p.approvedPendingActionId } } : {}),
     };
   };
 
@@ -262,6 +263,27 @@ export function createExecutor(s: Services, d: Deps) {
     return typeof v === 'string' ? v : null;
   };
 
+  /**
+   * s07 (spec 07 A4, BR): the picture shown with an approval card (the browser submit card's page screenshot). Sent into
+   * the card's chat/thread right BEFORE the card (createInternal sends the card itself, so this runs just before it),
+   * as a user-owned blob. Idempotency 'pa_photo:<runId>:<toolUseId>' (the pending-action id does not exist yet). Never
+   * part of the sealed, HMAC-compared diff. Any error is logged and the card still goes out.
+   */
+  const sendApprovalAttachment = async (spec: ToolSpec, input: unknown, ctx: ToolCtx, run: { id: string; userId: UserId | null }, card: { chatId: number; threadId?: number }, toolUseId: string): Promise<void> => {
+    if (!spec.approvalAttachment || !run.userId || !card.chatId) return;
+    try {
+      const att = await spec.approvalAttachment(input, ctx);
+      if (!att || att.kind !== 'photo' || att.bytes.length === 0) return;
+      const blobId = s.repos.messages.putBlob({ ownerUserId: run.userId, dek: `u:${run.userId}`, mime: 'image/jpeg', bytes: att.bytes });
+      await s.telegram.outbox.sendNow({
+        idempotencyKey: `pa_photo:${run.id}:${toolUseId}`, userId: run.userId, chatId: card.chatId, ...(card.threadId !== undefined ? { threadId: card.threadId } : {}),
+        method: 'sendPhoto', payload: { blob_id: blobId, filename: 'page.jpg', ...(att.caption ? { caption: att.caption.slice(0, 200) } : {}) }, priority: 1, disableNotification: true,
+      });
+    } catch (e) {
+      s.log.warn({ err: e instanceof Error ? e.name : 'error', tool: spec.name }, 'executor: approval attachment failed; sending the card without it');
+    }
+  };
+
   const askFlow = async (c: CallState, dec: Extract<Decision, { kind: 'ask' }>, run: RunRow, conv: ConversationRow, ch: ReplyChannel | null): Promise<void> => {
     const spec = c.spec!;
     const ctx = c.ctx!;
@@ -277,6 +299,7 @@ export function createExecutor(s: Services, d: Deps) {
     const card = meta.card ?? { chatId: ctx.chat.chatId, ...(ctx.chat.threadId !== undefined ? { threadId: ctx.chat.threadId } : {}) };
     const expiresAt = meta.expiresAt ?? defaultExpiry(conv, run.userId);
     if (ch) await ch.checkpoint().catch(() => undefined);
+    if (spec.approvalAttachment) await sendApprovalAttachment(spec, c.input, ctx, run, card, c.use.id);
     const { id } = await d.approvals().createInternal({
       userId: run.userId, runId: run.id, conversationId: conv.id, toolUseId: c.use.id, version: 1, supersedesId: null, toolName: spec.name,
       input: c.input, cls: c.cls!, diff, decision: dec, expiresAt, card, sourceRefs: meta.sourceRefs ?? [],
@@ -320,6 +343,12 @@ export function createExecutor(s: Services, d: Deps) {
         const wakeOn = on.map((t) => (t === 'user_input' ? `user_input:${conv.id}` : t));
         park = park ? { wakeOn: [...new Set([...park.wakeOn, ...wakeOn])], wakeAt: Math.min(park.wakeAt ?? Infinity, s.clock.now() + ms) } : { wakeOn, wakeAt: s.clock.now() + ms };
         updateCall(use.id, { status: 'waiting', decision: 'allow', ruleId: 'S18', actionClass: 'control', risk: 0 });
+        continue;
+      }
+      if (/^(pa|undo):/.test(use.id)) {
+        // idempotency keys 'pa:<id>' / 'undo:<id>' belong to the approval / undo paths; a provider-supplied id never takes them
+        updateCall(use.id, { status: 'error', isError: true });
+        c.result = errBlock(use.id, { error: 'INVALID_TOOL_USE_ID' });
         continue;
       }
       const spec = s.registry.get(use.name);
@@ -409,7 +438,7 @@ export function createExecutor(s: Services, d: Deps) {
     const run = row.run_id ? safe(() => s.repos.runs.get(row.run_id!), undefined) ?? null : null;
     const conv = row.conversation_id ? safe(() => s.repos.conversations.get(row.conversation_id!), undefined) ?? null : null;
     const pushed: Effect[] = [];
-    const ctx = buildCtx({ run, conv, userId: row.user_id, toolUseId: row.tool_use_id, idemKey: `pa:${row.id}`, signal: new AbortController().signal, pushed, taint: runTaint(s, run, conv), priority: 'approval', chat: row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : undefined });
+    const ctx = buildCtx({ run, conv, userId: row.user_id, toolUseId: row.tool_use_id, idemKey: `pa:${row.id}`, approvedPendingActionId: row.id, signal: new AbortController().signal, pushed, taint: runTaint(s, run, conv), priority: 'approval', chat: row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : undefined });
     let cls: Classification;
     try {
       cls = spec.classify(input, ctx);
@@ -586,11 +615,14 @@ export function createExecutor(s: Services, d: Deps) {
     d.pa.cas(row.id, 'executing', 'superseded');
     await ap.editCard(row, 'superseded');
     let newId: string | null = null;
+    const newCard = row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : { chatId: p.ctx.chat.chatId };
+    // the replacement card carries its own picture too (A4: the browser submit card always shows the page)
+    if (p.spec.approvalAttachment) await sendApprovalAttachment(p.spec, p.input, p.ctx, { id: row.run_id ?? row.id, userId: row.user_id }, newCard, toolUseId);
     try {
       const r = await ap.createInternal({
         userId: row.user_id, runId: row.run_id, conversationId: row.conversation_id, toolUseId, version, supersedesId: row.id, toolName: row.tool_name,
         input: p.input, cls: p.cls, diff, decision: { kind: 'ask', ruleId: 'T01', reason: 'Changed since the card', grantable: false, warnings: newWarnings },
-        expiresAt: Math.max(row.expires_at, s.clock.now() + 60 * 60_000), card: row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : { chatId: p.ctx.chat.chatId },
+        expiresAt: Math.max(row.expires_at, s.clock.now() + 60 * 60_000), card: newCard,
         sourceRefs: safe(() => JSON.parse(row.source_refs_json) as string[], []), extraWarnings: [`⚠ ${ap.str('draft_changed', lang)}`, ...oldWarnings],
       });
       newId = r.id;
@@ -686,9 +718,11 @@ export function createExecutor(s: Services, d: Deps) {
     const rendered = spec.renderDiff ? await spec.renderDiff(parsed.data, ctx) : fallbackDiff(spec, parsed.data, ctx.lang, targets);
     const diff: ApprovalDiff = { ...rendered, targets };
     if (!d.pa.cas(id, 'pending', 'superseded', { via: 'system', decidedBy: 0 })) return { error: 'NOT_PENDING' };
+    const newCard = row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : { chatId: ctx.chat.chatId };
+    if (spec.approvalAttachment) await sendApprovalAttachment(spec, parsed.data, ctx, { id: row.run_id ?? row.id, userId: row.user_id }, newCard, toolUseId);
     const r = await ap.createInternal({
       userId: row.user_id, runId: row.run_id, conversationId: row.conversation_id, toolUseId, version, supersedesId: row.id, toolName: spec.name,
-      input: parsed.data, cls, diff, decision: ask, expiresAt: row.expires_at, card: row.card_chat_id !== null ? { chatId: row.card_chat_id, ...(row.card_thread_id !== null ? { threadId: row.card_thread_id } : {}) } : { chatId: ctx.chat.chatId },
+      input: parsed.data, cls, diff, decision: ask, expiresAt: row.expires_at, card: newCard,
       sourceRefs: safe(() => JSON.parse(row.source_refs_json) as string[], []), ...(opts.extraWarnings?.length ? { extraWarnings: opts.extraWarnings } : {}),
     });
     updateCall(base, { pendingActionId: r.id });

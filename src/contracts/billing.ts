@@ -2,10 +2,13 @@
 import type { Message, PreCheckoutQuery } from 'grammy/types';
 import type { Ms, PlanId, UserId } from './common.ts';
 
-export type QuotaKind = 'turn' | 'web_search' | 'stt_seconds' | 'file' | 'guest_answer' | 'mission' | 'watcher' | 'cost_micros';
+/** s07 addition: 'browser' — browser tasks started per local day (spec 07 A4; usage_daily.browser_tasks). */
+export type QuotaKind = 'turn' | 'web_search' | 'stt_seconds' | 'file' | 'guest_answer' | 'mission' | 'watcher' | 'cost_micros' | 'browser';
 export interface PlanLimits {
   priceXtr: number; turnsPerDay: number; webSearchesPerDay: number; sttSecondsPerDay: number; filesPerDay: number; guestAnswersPerDay: number;
   activeMissions: number; watchers: number; watcherMinIntervalMin: number; missionBudgetMicros: number; dailyCostCapMicros: number; nudgeBudgetMax: number;
+  /** s07 (spec 07 A4): browser tasks per local day (quota kind 'browser'). */
+  browserTasksPerDay: number;
 }
 export interface QuotaService {
   check(userId: UserId, k: QuotaKind, amount?: number): { ok: boolean; used: number; limit: number; resetsAt: Ms };

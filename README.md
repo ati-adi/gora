@@ -3,8 +3,9 @@
 A Telegram-native personal AI agent that feels like a **friend you talk to and consult with**: it stays quiet
 until spoken to, learns each person from how they talk (memory, style, rhythm) instead of asking, and writes first
 only when a friend would. Underneath: streaming DM chat with Stop, approvals rendered by code, a hash-chained ledger,
-memory you can truly forget, reminders and missions, Secretary Mode, `@gora` guest answers, groups, and a Mini App
-control center.
+memory you can truly forget, reminders and missions, Secretary Mode, `@gora` guest answers, a browser agent that works
+on websites with approvals, Google Calendar/Gmail through Composio, Gora as a real participant in group chats, and a
+Mini App control center.
 
 - **Runtime:** Node ≥ 26.8 (runs `.ts` directly through type stripping; built-in `node:sqlite`, SQLite 3.53.4)
 - **Language:** TypeScript, erasable syntax only (no `enum`, `namespace`, parameter properties or decorators); `tsc` is typecheck-only
@@ -12,12 +13,14 @@ control center.
 - **LLM:** Groq (`groq-sdk` 1.6.0, free tier by default) or Anthropic (`@anthropic-ai/sdk` 0.128.0) behind one `LlmTransport`
 
 The specs are the source of truth, in precedence order:
-`docs/spec/05-friend-and-personalization.md` > `docs/spec/03-reconciliation.md` > `docs/spec/02-groq-free-tier-addendum.md`
-> `docs/spec/01-build-spec.md` (build notes: `docs/spec/04-foundation-notes.md`, the friend-mode plan: `docs/spec/06-friend-plan.md`).
+`docs/spec/07-browser-calendar-groups.md` > `docs/spec/05-friend-and-personalization.md` > `docs/spec/03-reconciliation.md`
+> `docs/spec/02-groq-free-tier-addendum.md` > `docs/spec/01-build-spec.md` (build notes: `docs/spec/04-foundation-notes.md`,
+the friend-mode plan: `docs/spec/06-friend-plan.md`, the s07 plan: `docs/spec/08-s07-plan.md`).
 
 ## Status
 
-Every work package of 01 §16 is built, and friend mode (spec 05) is integrated on top: `npm run typecheck`,
+Every work package of 01 §16 is built; friend mode (spec 05) and spec 07 (browser agent, Composio calendar, group
+participant) are integrated on top: `npm run typecheck`,
 `npm test` (unit + the `test/review/**` regression proofs), `npm run test:e2e:strict`, `npm run build:webapp` and
 `npm run sim` are the gate. Progress logs live in `docs/progress/`.
 
@@ -91,6 +94,82 @@ compares the database's schema with what `src/db/migrations/` produce and exits 
 bot that booted while an earlier draft of a migration was on disk). A drift is repaired with a new migration, never by
 editing an applied one.
 
+## Browser agent (spec 07 §A)
+
+"Забронируй столик в Café Alma на 19:00" → the chat run calls `browse_task`, which starts a **browse mission** (private
+topic when available, status card "Шаг 7: заполняю форму…", Stop, budget, survives restarts). The mission drives headless
+Chromium through the `browser_*` tools and finishes with `browser_done`.
+
+- **Runtime.** Playwright 1.63 + Chromium, launched lazily on the first browse task (never at boot), one **ephemeral**
+  context per task (no cookies or logins kept), closed on finish, Stop and crash recovery. Install once:
+  `npx playwright install chromium` (goes into Playwright's cache, e.g. `~/Library/Caches/ms-playwright`, not the repo).
+  `BROWSER_PROVIDER=none` or `FEATURE_BROWSER=false` turns it off; `browse_task` then answers in one line.
+- **What the model sees.** A compact snapshot (≤ 1,800 tokens on `groq-free`, ≤ 6,000 elsewhere): title/URL, the
+  viewport's interactive elements with refs `e1…`, forms, short text. Page text is untrusted web content (wrapped,
+  guard-screened, taints the run). Browse missions carry **no** memory, profile card or location — a page has nothing
+  of the owner's to exfiltrate beyond the task itself.
+- **Approvals.** Reading and navigating are free. Any submit/commit (book, confirm, send, order, pay, sign up, записаться,
+  забронировать…; a submit of a form holding name/phone/email; Enter or Space on a focused commit control) asks with
+  an approval card that has a **screenshot**, the site, the form's fields and "what happens next" (valid 2 h; the page
+  stays open meanwhile). The owner's personal details are typed freely only on a site the owner named; elsewhere they
+  ask. Opening a new site after pages were read asks (the URL itself can carry data).
+- **Hard lines.** No passwords or logins (a login wall parks with [Продолжить без входа] and the link), no payment data
+  ever ("the last step, payment, is yours" + the link), no downloads or uploads, ≤ 1 task per user, ≤ 40 steps,
+  ≤ 15 min before it parks and offers to continue, daily quota `browser` (free 3 / plus 15 / pro 50).
+- **Network boundary.** All of Chromium's traffic goes through a per-task local egress proxy (`src/browser/egress.ts`):
+  every request **and every redirect hop** is checked (http(s) only, ports 80/443, not Gora's own host, no
+  private/loopback/link-local/metadata address), and the socket connects only to the address that was vetted (no DNS
+  rebinding). WebRTC UDP is off and RTCPeerConnection/WebTransport are removed; data:/file:/chrome: URLs are refused.
+  A non-GET form submission never leaves without the owner's approval (network backstop under the commit detection).
+  Chromium runs with its OS sandbox (`BROWSER_SANDBOX=true`) and a scrubbed environment — no Gora secret reaches it.
+- **Live checks** (real Chromium, loopback/example.com only, no bot, no LLM):
+  `LIVE_BROWSER=1 npx vitest run --config test/live/vitest.config.ts` and
+  `LIVE_BROWSER=1 npx vitest run --config test/review/s07/vitest.live.config.ts`.
+
+## Google Calendar and Gmail via Composio (spec 07 §B)
+
+Calendar/Gmail tools run **client-side through Gora's executor** (Sentinel, approvals, ledger) against Composio's REST
+API (`backend.composio.dev`, auth configs on `/api/v3`, accounts and tool calls on `/api/v3.1`).
+
+1. In Composio, create a **Platform project API key** (`ak_…`; a consumer key `ck_…` is rejected with 401 code 801).
+2. `.env`: `INTEGRATIONS_PROVIDER=composio`, `COMPOSIO_API_KEY=ak_…`, optionally `COMPOSIO_AUTH_CONFIG_GCAL=ac_…` (pins the
+   Composio-managed Google Calendar auth config; without it one is found or created by name, idempotently). Gmail's
+   auth config is created lazily the first time a Gmail tool is needed (or pin `COMPOSIO_AUTH_CONFIG_GMAIL`).
+3. `PUBLIC_URL` must be reachable: the OAuth return is `${PUBLIC_URL}/oauth/callback`. Because a dev tunnel URL can
+   change, every issued link is **also polled** every 5 s for 10 min, so the connection completes even if the callback
+   never arrives (at most 3 pending links per user).
+4. Smoke (opt-in, never runs without `LIVE=1`): `LIVE=1 npm run smoke:composio` prints a connect link for a test user;
+   after connecting, `LIVE=1 npm run smoke:composio -- --after-connect --account ca_…` lists tomorrow's events and free
+   slots; `--write` creates one event and deletes it again.
+
+UX: a calendar question with nothing connected gets one line plus `[Подключить Google Календарь]`; after connecting,
+"Готово ✓" and then the answer to the original question (the pending run resumes). Permission levels live in the Mini
+App (Connections). Composio sees a stable HMAC of the user id, never the Telegram id. A connect link is a bearer link:
+whoever completes the Google consent on it connects their account to the issuing Gora user — share it with no one.
+
+## Gora in group chats (spec 07 §C)
+
+With BotFather **group privacy OFF**, Gora reads the whole group, remembers it and helps:
+
+- **Setup.** BotFather → `/setprivacy` → your bot → **Disable**, then **remove and re-add** the bot to every existing
+  group (Telegram applies privacy mode per membership). At boot Gora reads `getMe().can_read_all_group_messages`; when
+  it is false it logs the BotFather step once and keeps the old mention-only behaviour (nothing stored).
+  `FEATURE_GROUP_PARTICIPANT=false` forces mention-only. Add Gora with `https://t.me/<bot>?startgroup=g&admin=` (no
+  admin rights requested) — the Mini App Home and `/settings` show `[Добавить Гору в группу]`.
+- **Joining.** One line in the group's language: «Привет! Я Гора — читаю чат, чтобы помогать: отвечу, если позовёте, и
+  иногда подскажу сама. „Гора, тише“ — и я буду реже встревать.» No buttons.
+- **Storage.** Member messages (text, captions, short voice transcripts) are sealed under the group key and kept
+  **14 days** (edits replace the stored copy); a rolling summary (every 40 messages or 10 idle minutes) and automatic
+  group facts ("noticed in the group") expire with the same window, and so do the group conversation's transcripts.
+  `/forget всё` (any member) removes the stored messages, the summary, Gora's own group notes and the transcripts
+  (notes added with `/remember` go by their author or an admin). 7 days after the bot leaves, everything is shredded; a
+  group Gora is re-added to starts fresh. Group data never enters a DM request and DM data never enters a group request.
+- **Speaking.** Always when mentioned, replied to or addressed by name ("Гора, …"). Unprompted: after a 45 s lull a
+  local score → a fast judge → ≤ 2 sentences, learned per group (Thompson bandit over reactions and replies), at most 1
+  per 30 min and 6 a day, never at night in the group's time zone, never into venting. "Гора, тише" / "можешь чаще"
+  set the chattiness. `/catchup` or "что я пропустил?" summarises what came after your last message (the last hour if
+  you never wrote), privately.
+
 ## Setup
 
 ```bash
@@ -124,6 +203,7 @@ test bot; never use it with real users.
 | `npm run build:webapp` | builds the Mini App into `dist/webapp` (served at `/app/`) |
 | `npm run sim` | prints the friend first contact (`/start`, first message, silent tz) against fakes, no tokens (`-- --lang ru`) |
 | `npm run smoke:groq` | opt-in live smoke against Groq; runs only with `LIVE=1` and `GROQ_API_KEY` (≤ 6K tokens) |
+| `npm run smoke:composio` | opt-in live smoke against Composio; runs only with `LIVE=1` and `COMPOSIO_API_KEY` (see above) |
 | `npm run admin -- <cmd>` | admin CLI: `stats`, `refund`, `purge-user`, `verify-ledger`, `set-webhook`, `rewrap` (WP1) |
 
 Network is blocked at the socket level in tests: `test/harness/setup.ts` guards `net.Socket#connect`, so any TCP
@@ -146,6 +226,9 @@ See `.env.example` for every variable with its default. The important groups:
 - **Friend mode (05):** `EMBEDDINGS_PROVIDER=local|fake|none` (local e5 model on CPU by default; `none` = keyword
   search only), `EMBEDDINGS_MODEL`, `EMBEDDINGS_CACHE_DIR` (default `DATA_DIR/models`), and `PROACTIVE_TAU` (the
   send threshold, default 0.30; each user's "less"/"more" scales it ×1.5/×0.7).
+- **Spec 07:** `INTEGRATIONS_PROVIDER=composio` + `COMPOSIO_API_KEY` (`ak_…`) + optional `COMPOSIO_AUTH_CONFIG_GCAL` /
+  `_GMAIL`; `BROWSER_PROVIDER=playwright|none`, `BROWSER_HEADLESS`, `BROWSER_SANDBOX` (default on),
+  `BROWSER_EXECUTABLE_PATH`; `FEATURE_BROWSER`, `FEATURE_GROUP_PARTICIPANT`.
 - **Feature flags** (`FEATURE_*`) and **providers** (`INTEGRATIONS_PROVIDER`, `STT_PROVIDER`, `WEATHER_PROVIDER`, …; fakes by default).
   `STT_PROVIDER=auto` (the default) transcribes with Groq when `GROQ_API_KEY` is set, else OpenAI when `OPENAI_API_KEY` is set, else
   STT is off; `STT_PROVIDER=fake` is refused whenever a real `TELEGRAM_BOT_TOKEN` is configured.
@@ -169,8 +252,9 @@ At boot Gora reads `getMe` and logs a checklist line for every capability that i
 2. Set the **Main Mini App** and its domain to exactly `PUBLIC_URL`, and set the menu button
    (Gora also sets it with `setChatMenuButton` when the definitions change).
 3. Stars payments need no provider token.
-4. Keep **Inline mode OFF**, **Group Privacy ON**, **Bot-to-Bot Communication Mode OFF**, and Mini App origin
-   protection **ON** (the default).
+4. Keep **Inline mode OFF**, **Bot-to-Bot Communication Mode OFF**, and Mini App origin protection **ON** (the default).
+5. **Group Privacy OFF** (`/setprivacy` → Disable) for Gora as a group participant (spec 07 §C), then re-add the bot to
+   existing groups. With privacy ON Gora stays mention-only in groups and stores nothing.
 
 Commands are registered by Gora itself (`setMyCommands`, private and group scopes; `/me` is ephemeral).
 
@@ -203,7 +287,8 @@ src/
   contracts/                         frozen cross-module interfaces (01 §4.4 + 03 R7)                                    [WP0]
   kernel/                            clock, ids, log, errors, canonicalJson, keyedMutex, tags, timeMath, registries,
                                      tokens (estimator), groqClient (the only groq-sdk construction site)                [WP0]
-  db/        sqlite.ts migrate.ts migrations/ (001_init, 002_review_indexes, 003_friend_personalization; additive)     [WP0]
+  db/        sqlite.ts migrate.ts migrations/ (001_init, 002_review_indexes, 003_friend_personalization,
+             004_browser_calendar_groups, 005_group_summary_coverage; additive)                                         [WP0]
   db/        keystore.ts crypto.ts repos/ · ledger/ · billing/ · privacy/                                                [WP1]
   telegram/  bot, ingress, inbox, dispatcher/lanes, outbox/limiter, files, topics, links, commands, codec,
              render/ (sanitize, split, fallback, cards), channels/ (dmStream, notify, group, guest, bizOwner)           [WP2]
@@ -216,6 +301,8 @@ src/
   proactive/ missions/                                nudges, signals, brief, commitments, missions, watchers          [WP6b]
   surfaces/  handlers, onboarding, commands, callbacks, /why, guest, groups, payments, strings                        [WP7a]
   surfaces/business/                                  Secretary pipeline (createBusinessModule), business tools        [WP7b]
+  browser/   browse tasks, snapshot, commit/payment/login detection, network guard + egress proxy, Playwright       [07 BR]
+  groups/    group participant: sealed store, summary + facts, heuristic → judge → chime-in, bandit, catch-up       [07 GR]
   http/      Hono server, initData auth, API routes · webapp/ React Mini App                                            [WP8]
 test/harness/   fakeTelegram, scriptedTransport, invariants, tmpDb, updates, initData, fakes, testApp                  [WP0]
 ```

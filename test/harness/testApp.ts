@@ -1,7 +1,7 @@
 // test/harness/testApp.ts (WP0) — createTestApp(): the whole process wired against fakes (01 §15.1).
 // Real factories are used wherever the owning WP has merged; while a factory is still a WP0 stub (NotBuiltError),
 // the matching no-op / in-memory fake from fakes.ts is used instead (disable with `noopFallback: false`).
-import type { Update } from 'grammy/types';
+import type { Update, UserFromGetMe } from 'grammy/types';
 import { createApp, type App } from '../../src/app.ts';
 import { testConfig, type Config, type DeepPartial } from '../../src/config.ts';
 import type { Factories, IntegrationProvider, Logger, Ms, Random, Services } from '../../src/contracts/index.ts';
@@ -13,6 +13,7 @@ import { signInitData } from './initData.ts';
 import { ScriptedTransport } from './scriptedTransport.ts';
 import { makeTmpDir, removeDir, tmpPaths } from './tmpDb.ts';
 import { NOOP_FACTORIES } from './fakes.ts';
+import { FakeBrowser } from './fakeBrowser.ts';
 import { setUpdateClock, TEST_USER, U, type TestUser } from './updates.ts';
 
 export interface CreateTestAppOptions {
@@ -34,6 +35,10 @@ export interface CreateTestAppOptions {
   random?: Random;
   /** Default true: call app.start() (ingress, recover, scheduler, outbox, dispatcher). */
   start?: boolean;
+  /** s07 (spec 07 A6): the browser (default: a FakeBrowser with no sites). Kept across restart() (sessions are closed by app.stop, like a crash). */
+  browser?: FakeBrowser;
+  /** s07 (spec 07 C1): getMe() result, e.g. TEST_BOT_INFO_READS_ALL (privacy mode OFF). Default TEST_BOT_INFO (privacy mode ON). Kept across restart(). */
+  botInfo?: UserFromGetMe;
   /** internal: the temp dir was created by the harness (removed on close, kept across restart). */
   _ownsDir?: boolean;
 }
@@ -48,6 +53,8 @@ export interface TestApp {
   app: App;
   config: Config;
   dir: string;
+  /** s07: the FakeBrowser injected as caps.browser. */
+  browser: FakeBrowser;
   send(u: Update): Promise<void>;
   userSends(text: string, o?: { user?: TestUser; threadId?: number; replyTo?: number }): Promise<void>;
   tap(callbackData: string, o?: { user?: TestUser; messageId?: number }): Promise<void>;
@@ -68,6 +75,7 @@ export async function createTestApp(o: CreateTestAppOptions = {}): Promise<TestA
   setUpdateClock(() => clock.now());
   const tg = o.tg ?? createFakeTelegram({ now: () => clock.now() });
   const llm = o.llm ?? new ScriptedTransport({ clock });
+  const browser = o.browser ?? new FakeBrowser([], () => clock.now());
   const config = testConfig({ DATA_DIR: paths.dataDir, KEYS_DB_PATH: paths.keysDbPath, BACKUP_DIR: paths.backupDir, PUBLIC_URL: 'https://gora.test', ...o.env }, o.config ?? {});
   const app = await createApp({
     config,
@@ -77,7 +85,8 @@ export async function createTestApp(o: CreateTestAppOptions = {}): Promise<TestA
     fetchImpl: tg.fetch,
     transport: llm,
     ...(o.integrations ? { integrationProvider: o.integrations } : {}),
-    telegram: { transformers: [tg.transformer], botInfo: TEST_BOT_INFO, fetchImpl: tg.fetch },
+    browser,
+    telegram: { transformers: [tg.transformer], botInfo: o.botInfo ?? TEST_BOT_INFO, fetchImpl: tg.fetch },
     ...(o.factories ? { factories: o.factories } : {}),
     ...(o.noopFallback === false ? {} : { notBuiltFallback: NOOP_FACTORIES }),
   });
@@ -125,7 +134,7 @@ export async function createTestApp(o: CreateTestAppOptions = {}): Promise<TestA
   };
 
   const t: TestApp = {
-    s, tg, llm, clock, app, config, dir,
+    s, tg, llm, clock, app, config, dir, browser,
     send,
     settle,
     userSends: (text, uo = {}) => send(U.privateText(text, { ...(uo.user ? { user: uo.user } : {}), ...(uo.threadId ? { threadId: uo.threadId } : {}), ...(uo.replyTo ? { replyTo: uo.replyTo } : {}) })),
@@ -164,7 +173,7 @@ export async function createTestApp(o: CreateTestAppOptions = {}): Promise<TestA
       const provider = o.integrations ?? s.integrations.provider ?? undefined;
       await app.stop();
       closed = true;
-      return createTestApp({ ...o, dir, _ownsDir: !o.dir || !!o._ownsDir, clock: new FakeClock(clock.now()), tg, llm, ...(provider ? { integrations: provider } : {}) });
+      return createTestApp({ ...o, dir, _ownsDir: !o.dir || !!o._ownsDir, clock: new FakeClock(clock.now()), tg, llm, browser, ...(provider ? { integrations: provider } : {}) });
     },
     close: async () => {
       if (!closed) await app.stop();

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { USER_DATA_TABLES } from '../../../src/contracts/storage.ts';
+import { GROUP_DATA_TABLES, USER_DATA_TABLES } from '../../../src/contracts/storage.ts';
 import { appliedVersions, loadMigrations, migrate } from '../../../src/db/migrate.ts';
 import { openTmpDb, type TmpDb } from '../../harness/tmpDb.ts';
 
@@ -24,9 +24,9 @@ function seedEpoch(db: TmpDb['db']) {
 describe('migrations (01 §7.1 + 03 R7)', () => {
   it('001 applies once and records its version', () => {
     t = openTmpDb({ migrate: false });
-    expect(migrate(t.db, { now: NOW })).toEqual([1, 2, 3]);
+    expect(migrate(t.db, { now: NOW })).toEqual([1, 2, 3, 4, 5]);
     expect(migrate(t.db, { now: NOW })).toEqual([]);
-    expect([...appliedVersions(t.db)]).toEqual([1, 2, 3]);
+    expect([...appliedVersions(t.db)]).toEqual([1, 2, 3, 4, 5]);
     expect(loadMigrations().map((m) => m.name)).toContain('001_init.sql');
   });
   it('003 (spec 05 §D) applies on top of a populated 001+002 database and keeps existing rows', () => {
@@ -41,7 +41,7 @@ describe('migrations (01 §7.1 + 03 R7)', () => {
       t.db.prepare(`INSERT INTO user_settings(user_id, updated_at) VALUES ('u1', ?)`).run(NOW);
       t.db.prepare(`INSERT INTO memory_facts(id, user_id, scope, kind, text_enc, dek_gen, sensitivity, confidence, status, source_kind, created_by, created_at, updated_at)
                     VALUES ('m1', 'u1', 'user:u1', 'fact', x'01', 1, 'normal', 0.9, 'active', 'user_message', 'extractor', ?, ?)`).run(NOW, NOW);
-      expect(migrate(t.db, { now: NOW })).toEqual([3]);
+      expect(migrate(t.db, { now: NOW })).toEqual([3, 4, 5]);
       const u = t.db.prepare(`SELECT proactive_level, tz_hint_at, status FROM users WHERE id = 'u1'`).get<{ proactive_level: string; tz_hint_at: number | null; status: string }>();
       expect(u).toEqual({ proactive_level: 'normal', tz_hint_at: null, status: 'active' });
       expect(t.db.prepare(`SELECT importance, expires_at FROM memory_facts WHERE id = 'm1'`).get()).toEqual({ importance: 0.5, expires_at: null });
@@ -62,6 +62,74 @@ describe('migrations (01 §7.1 + 03 R7)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+  it('004 (spec 07 §D) applies on top of a populated 001–003 database and keeps existing rows', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gora-mig-'));
+    try {
+      const upTo3 = join(dir, 'm');
+      mkdirSync(upTo3);
+      for (const m of loadMigrations().filter((x) => x.version <= 3)) writeFileSync(join(upTo3, m.name), m.sql);
+      t = openTmpDb({ migrate: false });
+      expect(migrate(t.db, { now: NOW, dir: upTo3 + '/' })).toEqual([1, 2, 3]);
+      t.db.prepare(`INSERT INTO users(id, tg_user_id, created_at, updated_at) VALUES ('u1', 1001, ?, ?)`).run(NOW, NOW);
+      t.db.prepare(`INSERT INTO usage_daily(user_id, day, turns) VALUES ('u1', '2026-09-28', 5)`).run();
+      t.db.prepare(`INSERT INTO conversations(id, scope_key, kind, user_id, route, model, effort, toolset, tools_hash, system_version, betas_json, created_at, last_activity_at)
+                    VALUES ('c1', 'dm:1001', 'dm', 'u1', 'chat', 'm', 'medium', 'FULL', 'h', 'v', '[]', ?, ?)`).run(NOW, NOW);
+      t.db.prepare(`INSERT INTO conversation_toolkits(conversation_id, toolkit, expires_after_turn, loaded_at) VALUES ('c1', 'web', 6, ?)`).run(NOW);
+      expect(() => t!.db.prepare(`INSERT INTO conversation_toolkits(conversation_id, toolkit, expires_after_turn, loaded_at) VALUES ('c1', 'browser', 6, ?)`).run(NOW)).toThrow(/CHECK/);
+      expect(migrate(t.db, { now: NOW })).toEqual([4, 5]);
+      // conversation_toolkits was rebuilt with 'browser' allowed; rows kept; still cascades with the conversation
+      expect(t.db.prepare(`SELECT toolkit FROM conversation_toolkits`).all()).toEqual([{ toolkit: 'web' }]);
+      t.db.prepare(`INSERT INTO conversation_toolkits(conversation_id, toolkit, expires_after_turn, loaded_at) VALUES ('c1', 'browser', 6, ?)`).run(NOW);
+      expect(() => t!.db.prepare(`INSERT INTO conversation_toolkits(conversation_id, toolkit, expires_after_turn, loaded_at) VALUES ('c1', 'bogus', 6, ?)`).run(NOW)).toThrow(/CHECK/);
+      expect(t.db.prepare(`SELECT turns, browser_tasks FROM usage_daily WHERE user_id = 'u1'`).get()).toEqual({ turns: 5, browser_tasks: 0 });
+      // browser_tasks: one active task per user (A4)
+      const bt = (id: string, status: string) =>
+        t!.db.prepare(`INSERT INTO browser_tasks(id, user_id, status, goal_enc, created_at, updated_at) VALUES (?, 'u1', ?, x'01', ?, ?)`).run(id, status, NOW, NOW);
+      bt('bt1', 'running');
+      expect(() => bt('bt2', 'parked')).toThrow(/UNIQUE/);
+      bt('bt3', 'done');
+      expect(() => bt('bt4', 'paused')).toThrow(/CHECK/);
+      // integration_links: one row per oauth state
+      const il = (id: string, state: string) =>
+        t!.db.prepare(`INSERT INTO integration_links(id, user_id, integration, provider, state, status, return_chat_id, next_poll_at, deadline_at, created_at) VALUES (?, 'u1', 'gcal', 'composio', ?, 'pending', 1001, ?, ?, ?)`).run(id, state, NOW, NOW + 600_000, NOW);
+      il('il1', 's1');
+      expect(() => il('il2', 's1')).toThrow(/UNIQUE/);
+      // group tables
+      t.db.prepare(`INSERT INTO group_messages(chat_id, tg_message_id, from_tg_id, sender_hmac, kind, text_enc, at, created_at) VALUES (-100, 1, 1001, 'h', 'text', x'01', ?, ?)`).run(NOW, NOW);
+      t.db.prepare(`INSERT INTO group_summaries(chat_id, version, summary_enc, covered_until_at, updated_at) VALUES (-100, 1, x'01', ?, ?)`).run(NOW, NOW);
+      t.db.prepare(`INSERT INTO group_policy(chat_id, updated_at) VALUES (-100, ?)`).run(NOW);
+      expect(t.db.prepare(`SELECT chattiness, arms_json, chimes_today FROM group_policy`).get()).toEqual({ chattiness: 'normal', arms_json: '{}', chimes_today: 0 });
+      expect(() => t!.db.prepare(`UPDATE group_policy SET chattiness = 'loud'`).run()).toThrow(/CHECK/);
+      t.db.prepare(`DELETE FROM users WHERE id = 'u1'`).run();
+      for (const tbl of ['browser_tasks', 'integration_links', 'conversation_toolkits']) expect(t.db.prepare(`SELECT COUNT(*) AS n FROM ${tbl}`).get()).toEqual({ n: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('005 (s07 gate) adds group_summaries.covered_from_at on top of a populated 004 database, keeping rows', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gora-mig-'));
+    try {
+      const upTo4 = join(dir, 'm');
+      mkdirSync(upTo4);
+      for (const m of loadMigrations().filter((x) => x.version <= 4)) writeFileSync(join(upTo4, m.name), m.sql);
+      t = openTmpDb({ migrate: false });
+      expect(migrate(t.db, { now: NOW, dir: upTo4 + '/' })).toEqual([1, 2, 3, 4]);
+      t.db.prepare(`INSERT INTO group_summaries(chat_id, version, summary_enc, covered_until_at, updated_at) VALUES (-100, 1, x'01', ?, ?)`).run(NOW, NOW);
+      expect(migrate(t.db, { now: NOW })).toEqual([5]);
+      expect(t.db.prepare(`SELECT chat_id, covered_from_at FROM group_summaries`).get()).toEqual({ chat_id: -100, covered_from_at: null });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('GROUP_DATA_TABLES (spec 07 C3) names real tables keyed by chat_id and covers every group_* table', () => {
+    t = openTmpDb();
+    const tables = t.db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`).all<{ name: string }>().map((r) => r.name);
+    for (const e of GROUP_DATA_TABLES) {
+      expect(tables, e.table).toContain(e.table);
+      expect(t.db.raw.prepare(`SELECT COUNT(*) AS n FROM ${e.table} WHERE ${e.where}`).get({ chatId: 0 })).toEqual({ n: 0 });
+    }
+    expect(GROUP_DATA_TABLES.map((e) => e.table).sort()).toEqual(tables.filter((n) => n.startsWith('group_')).sort());
   });
   it('every table is STRICT', () => {
     t = openTmpDb();

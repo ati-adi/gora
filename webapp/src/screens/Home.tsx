@@ -11,7 +11,7 @@ import { patch, post, useApi } from '../lib/api.ts';
 import { fmtTime, tDyn, useT } from '../lib/i18n.ts';
 import { useMe } from '../lib/me.ts';
 import { useNav } from '../lib/nav.ts';
-import { addToHomeScreen, cloudGet, cloudSet, homeScreenStatus } from '../lib/tg.ts';
+import { addToHomeScreen, cloudGet, cloudSet, homeScreenStatus, openTelegramLink } from '../lib/tg.ts';
 
 interface HomeData {
   pendingApprovals: number;
@@ -69,6 +69,8 @@ export function Home() {
   if (!home.data) return <ErrorState error={home.error} onRetry={home.reload} />;
   const d = home.data;
   const tz = me.user.tz;
+  // spec 07 C6: /api/me addToGroupUrl (the startgroup picker, no admin rights)
+  const addToGroupUrl = me.addToGroupUrl ?? null;
   const planName = t(d.plan === 'plus' ? 'plan_plus' : d.plan === 'pro' ? 'plan_pro' : 'plan_free');
 
   const setPaused = (v: boolean) => act.run(async () => {
@@ -120,6 +122,12 @@ export function Home() {
           </button>
         ))}
       </div>
+
+      {addToGroupUrl ? (
+        <Section>
+          <Row icon="👥" title={t('add_to_group_title')} subtitle={t('add_to_group_subtitle')} onClick={() => openTelegramLink(addToGroupUrl)} />
+        </Section>
+      ) : null}
 
       {d.missions.length > 0 ? (
         <Section title={t('missions_active')}>

@@ -1,9 +1,16 @@
-// integrations/composioMap.ts (WP5) — ⚠U11: every Composio action slug and argument mapping lives here. Slugs and
-// argument names are not verified against a live account; an operation mapped to null returns a clean
-// "not supported by provider" error (the tools turn it into is_error). Response parsing is defensive.
+// integrations/composioMap.ts (WP5, s07 CAL) — every Composio action slug, argument mapping and pinned toolkit version
+// lives here (spec 07 B1, plan 08 §4.2–§4.3, verified against the current docs + @composio/core 0.21.0 typings on
+// 2026-09-29). Tool schemas are pinned per toolkit (`TOOLKIT_VERSIONS`): omitting `version` on /api/v3 silently selects
+// the oldest schemas and on /api/v3.1 the latest, so argument names could drift under us. Bumping a version is a
+// deliberate change here together with its tests. An operation mapped to null returns a clean "not supported by
+// provider" error. Response parsing is defensive.
 import type { CalEvent, CalEventInput, DraftInput, IntegrationKind, MailThread, MailThreadSummary } from '../contracts/index.ts';
 
 export const COMPOSIO_TOOLKIT: Record<IntegrationKind, string> = { gmail: 'gmail', gcal: 'googlecalendar' };
+/** Pinned tool-schema versions, sent as `version` on every POST /api/v3.1/tools/execute/{slug}. */
+export const TOOLKIT_VERSIONS: Readonly<Record<IntegrationKind, string>> = Object.freeze({ gcal: '20260915_00', gmail: '20260915_00' });
+/** B5: the Composio-managed auth config Gora finds or creates, idempotently by this name. */
+export const authConfigName = (kind: IntegrationKind): string => `gora-${COMPOSIO_TOOLKIT[kind]}`;
 
 export type MailOp = 'search' | 'readThread' | 'createDraft' | 'getDraft' | 'deleteDraft' | 'sendDraft' | 'findSent';
 export type CalOp = 'list' | 'freeBusy' | 'create' | 'update' | 'remove' | 'respond' | 'findByIdem';
@@ -23,7 +30,7 @@ export const CAL_SLUGS: Readonly<Record<CalOp, string | null>> = Object.freeze({
   create: 'GOOGLECALENDAR_CREATE_EVENT',
   update: 'GOOGLECALENDAR_PATCH_EVENT',
   remove: 'GOOGLECALENDAR_DELETE_EVENT',
-  respond: null, // no documented RSVP action: not supported by provider
+  respond: 'GOOGLECALENDAR_PATCH_EVENT', // with rsvp_response (the owner's own attendee status)
   findByIdem: 'GOOGLECALENDAR_EVENTS_LIST',
 });
 
@@ -31,28 +38,43 @@ export const CAL_SLUGS: Readonly<Record<CalOp, string | null>> = Object.freeze({
 export const mailArgs = {
   search: (q: { query: string; maxResults: number; newerThanDays?: number }) => ({ query: `${q.query}${q.newerThanDays ? ` newer_than:${q.newerThanDays}d` : ''}`.trim(), max_results: q.maxResults, include_payload: false }),
   readThread: (threadId: string) => ({ thread_id: threadId }),
-  createDraft: (d: DraftInput) => ({ recipient_email: d.to[0], extra_recipients: d.to.slice(1), cc: d.cc, subject: d.subject, body: d.body, ...(d.replyToThreadId ? { thread_id: d.replyToThreadId } : {}) }),
-  getDraft: (draftId: string) => ({ draft_id: draftId }),
+  createDraft: (d: DraftInput) => ({
+    recipient_email: d.to[0], extra_recipients: d.to.slice(1), cc: d.cc, subject: d.subject, body: d.body, is_html: false, ...(d.replyToThreadId ? { thread_id: d.replyToThreadId } : {}),
+  }),
+  getDraft: (draftId: string) => ({ draft_id: draftId, format: 'full' }),
   deleteDraft: (draftId: string) => ({ draft_id: draftId }),
   sendDraft: (draftId: string) => ({ draft_id: draftId }),
-  findSent: (q: { to: string; subject: string; afterMs: number }) => ({ query: `in:sent to:${q.to} subject:"${q.subject.replace(/"/g, '')}" after:${Math.floor(q.afterMs / 1000)}`, max_results: 5 }),
+  findSent: (q: { to: string; subject: string; afterMs: number }) => ({ query: `in:sent to:${q.to} subject:"${q.subject.replace(/"/g, '')}" after:${Math.floor(q.afterMs / 1000)}`, max_results: 5, include_payload: false }),
 };
 /** The idempotency key travels as a private extended property so findByIdem can look it up. */
 export const IDEM_PROP = 'gora_idem';
+export type SendUpdates = 'all' | 'externalOnly' | 'none';
+const zone = (tz: string | undefined) => (tz ? { timeZone: tz } : {});
+/**
+ * `tz` is the owner's IANA zone (the provider looks it up); the docs warn that UTC skews EVENTS_LIST / FREE_BUSY results.
+ * `send_updates` is Google's enum string, never a boolean. Create: 'all' only when there are attendees (the approval card
+ * says invites go out), else 'none'. Update / delete: 'all' — only attendees are ever notified, so an owner-only event
+ * notifies nobody, and every change that touches attendees is approved first (calendar.ts classifies it send_external /
+ * destructive). No Google Meet link is ever requested (`create_meeting_room: false`; the default adds one).
+ */
 export const calArgs = {
-  list: (q: { fromIso: string; toIso: string; query?: string; max: number }) => ({ calendar_id: 'primary', timeMin: q.fromIso, timeMax: q.toIso, ...(q.query ? { q: q.query } : {}), maxResults: q.max, singleEvents: true, orderBy: 'startTime' }),
-  freeBusy: (q: { fromIso: string; toIso: string }) => ({ timeMin: q.fromIso, timeMax: q.toIso, items: [{ id: 'primary' }] }),
+  list: (q: { fromIso: string; toIso: string; query?: string; max: number }, tz?: string) => ({
+    calendarId: 'primary', timeMin: q.fromIso, timeMax: q.toIso, ...zone(tz), ...(q.query ? { query: q.query } : {}), maxResults: q.max, singleEvents: true, orderBy: 'startTime',
+  }),
+  freeBusy: (q: { fromIso: string; toIso: string }, tz?: string) => ({ items: ['primary'], timeMin: q.fromIso, timeMax: q.toIso, ...zone(tz) }),
   create: (e: CalEventInput, idemKey: string) => ({
-    calendar_id: 'primary', summary: e.title, start_datetime: e.start, end_datetime: e.end, timezone: e.tz, attendees: e.attendees, send_updates: e.attendees.length > 0,
+    calendar_id: 'primary', summary: e.title, start_datetime: e.start, end_datetime: e.end, timezone: e.tz, attendees: e.attendees,
+    send_updates: (e.attendees.length > 0 ? 'all' : 'none') satisfies SendUpdates, create_meeting_room: false,
     ...(e.location ? { location: e.location } : {}), ...(e.description ? { description: e.description } : {}), extended_properties: { private: { [IDEM_PROP]: idemKey } },
   }),
   update: (id: string, p: Partial<CalEventInput>) => ({
     calendar_id: 'primary', event_id: id, ...(p.title !== undefined ? { summary: p.title } : {}), ...(p.start ? { start_time: p.start } : {}), ...(p.end ? { end_time: p.end } : {}),
     ...(p.tz ? { timezone: p.tz } : {}), ...(p.location !== undefined ? { location: p.location } : {}), ...(p.description !== undefined ? { description: p.description } : {}),
-    ...(p.attendees ? { attendees: p.attendees } : {}),
+    ...(p.attendees ? { attendees: p.attendees } : {}), send_updates: 'all' satisfies SendUpdates,
   }),
-  remove: (id: string) => ({ calendar_id: 'primary', event_id: id }),
-  findByIdem: (idemKey: string) => ({ calendar_id: 'primary', privateExtendedProperty: `${IDEM_PROP}=${idemKey}`, maxResults: 1 }),
+  remove: (id: string) => ({ calendar_id: 'primary', event_id: id, send_updates: 'all' satisfies SendUpdates }),
+  respond: (id: string, r: 'accepted' | 'declined' | 'tentative') => ({ calendar_id: 'primary', event_id: id, rsvp_response: r }),
+  findByIdem: (idemKey: string) => ({ calendarId: 'primary', privateExtendedProperty: `${IDEM_PROP}=${idemKey}`, maxResults: 1 }),
 };
 
 // ── response parsers (defensive: Composio wraps Google payloads in `data` with varying nesting)

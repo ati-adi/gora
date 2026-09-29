@@ -13,7 +13,7 @@ const input = z.object({
 type In = z.infer<typeof input>;
 
 /** 03 R3: one line per toolkit, terse (≤ 160 chars). */
-export const USE_TOOLKIT_DESCRIPTION = 'Load tools when one is missing: web (search, URL, weather, fx, places), calendar, email, missions, secretary, files, account.';
+export const USE_TOOLKIT_DESCRIPTION = 'Load tools when one is missing: web (search, URL, weather, fx, places), calendar, email, missions, secretary, files, account, browser.';
 
 export const useToolkitTool: ToolSpec<In> = {
   name: 'use_toolkit',

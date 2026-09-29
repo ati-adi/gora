@@ -130,6 +130,10 @@ own(['src/memory/', 'src/scheduler/', 'src/reminders/', 'src/proactive/', 'src/m
 own(['src/memory/'], 'user_profile fact_embeddings');
 own(['src/behaviour/'], 'user_signals user_rhythm proactive_arms proactive_log');
 own(['src/surfaces/'], 'business_connections business_chats business_messages business_drafts groups guest_invocations deeplink_tokens choice_sets subscriptions payments');
+// s07 (spec 07 §D, migration 004): BR browser tasks, CAL pending connect links, GR group participant tables
+own(['src/browser/'], 'browser_tasks');
+own(['src/tools/', 'src/capabilities/', 'src/integrations/'], 'integration_links');
+own(['src/groups/'], 'group_messages group_summaries group_policy');
 // The deletion plan (contracts/storage.ts) and its executor (privacy/, WP1) legitimately name every table.
 const SQL_EXEMPT = only('src/contracts/storage.ts', 'src/privacy/');
 
@@ -178,6 +182,9 @@ export function scan(files: SrcFile[]): Violation[] {
   v.push(...grep(files, 'no-math-random', /\bMath\s*\.\s*random\b/, none));
   // 13. (spec 05 B2) only capabilities/embedder.ts loads @huggingface/transformers (lazily, never at boot)
   v.push(...grep(files, 'transformers-runtime-import', runtimeImportRe('@huggingface/transformers'), only('src/capabilities/embedder.ts')));
+  // 14. (spec 07 A1) only browser/playwright.ts loads playwright (lazily, on the first openSession, never at boot)
+  v.push(...grep(files, 'playwright-runtime-import', runtimeImportRe('playwright'), only('src/browser/playwright.ts')));
+  v.push(...grep(files, 'playwright-runtime-import', runtimeImportRe('playwright-core'), only('src/browser/playwright.ts')));
   // 11. SQL for a table only in the owning WP's modules. Two detectors: upper-case keywords (any context), and any-case
   // keywords that need SQL context after the table name (so English like "remove it from users of the group" passes).
   const SQL_RES = [
@@ -216,6 +223,7 @@ describe('import and coding rules (01 §4.2, 03 R1)', () => {
       'src/db/keystore.ts', 'src/db/crypto.ts', 'src/db/repos/index.ts', 'src/ledger/index.ts', 'src/billing/index.ts', 'src/privacy/index.ts', 'src/telegram/index.ts',
       'src/telegram/channels/index.ts', 'src/agent/index.ts', 'src/trust/index.ts', 'src/tools/index.ts', 'src/capabilities/index.ts', 'src/integrations/index.ts',
       'src/memory/index.ts', 'src/scheduler/index.ts', 'src/reminders/index.ts', 'src/proactive/index.ts', 'src/missions/index.ts', 'src/surfaces/index.ts', 'src/surfaces/business/index.ts', 'src/http/index.ts',
+      'src/browser/index.ts', 'src/browser/capability.ts', 'src/browser/tools.ts', 'src/groups/index.ts', 'src/groups/tools.ts', // s07
     ]) expect(paths.has(p), p).toBe(true);
   });
 
@@ -271,6 +279,16 @@ describe('import and coding rules (01 §4.2, 03 R1)', () => {
     expect(rulesFor('src/behaviour/repo.ts', 'db.prepare(`SELECT * FROM user_signals WHERE user_id = ?`)')).toEqual([]);
     expect(rulesFor('src/behaviour/repo.ts', 'db.prepare(`SELECT * FROM user_profile WHERE user_id = ?`)')).toEqual(['sql-table-ownership']);
     expect(rulesFor('src/memory/profile.ts', 'db.prepare(`SELECT * FROM user_profile WHERE user_id = ?`)')).toEqual([]);
+  });
+  it('spec 07: playwright only in browser/playwright.ts; s07 tables owned', () => {
+    expect(rulesFor('src/browser/tools.ts', "import { chromium } from 'playwright';")).toEqual(['playwright-runtime-import']);
+    expect(rulesFor('src/browser/capability.ts', "const pw = await import('playwright');")).toEqual(['playwright-runtime-import']);
+    expect(rulesFor('src/browser/capability.ts', "import type { Page } from 'playwright';")).toEqual([]);
+    expect(rulesFor('src/browser/playwright.ts', "const pw = await import('playwright');")).toEqual([]);
+    expect(rulesFor('src/surfaces/group.ts', 'db.prepare(`SELECT * FROM group_messages WHERE chat_id = ?`)')).toEqual(['sql-table-ownership']);
+    expect(rulesFor('src/groups/repo.ts', 'db.prepare(`SELECT * FROM group_messages WHERE chat_id = ?`)')).toEqual([]);
+    expect(rulesFor('src/agent/x.ts', 'db.prepare(`UPDATE browser_tasks SET status = ?`)')).toEqual(['sql-table-ownership']);
+    expect(rulesFor('src/integrations/links.ts', 'db.prepare(`SELECT * FROM integration_links WHERE state = ?`)')).toEqual([]);
   });
   it('detects Telegram file URLs outside telegram/files.ts', () => {
     expect(rulesFor('src/capabilities/media.ts', "const u = `https://api.telegram.org/file/bot${t}/${p}`;")).toEqual(['telegram-file-url']);

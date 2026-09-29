@@ -1,5 +1,5 @@
 // http/routes/me.ts (WP8; friend mode 05) — GET /api/me (read): profile, plan, flags, memory state and proactive level
-// (onboardingStep stays for old clients; it is always 'done' now).
+// (onboardingStep stays for old clients; it is always 'done' now), and the add-to-group link (spec 07 C6).
 import type { Services, TelegramModule } from '../../contracts/index.ts';
 import { memoryState } from '../../contracts/index.ts';
 import { auth, langOf, safely, type Api } from '../util.ts';
@@ -22,6 +22,8 @@ export function registerMe(api: Api, s: Services, tg: TelegramModule): void {
         topics: botFlags?.topics ?? false,
       },
       bot: { username: safely(s, 'botInfo', () => tg.gateway.botInfo.username, null) },
+      // spec 07 C6 (GR): the Home button [Добавить Гору в группу] — the startgroup picker, no admin rights requested
+      addToGroupUrl: f.groups ? safely(s, 'botInfo', () => `https://t.me/${tg.gateway.botInfo.username}?startgroup=g&admin=`, null) : null,
       provider: { id: s.profile.id, transport: s.config.llm.transport },
       session: { ageSec: Math.floor(ageMs / 1000), startParam },
       now,

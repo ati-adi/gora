@@ -8,12 +8,14 @@ const prefixed = (p: string) => ALL.filter((n) => n.startsWith(p)).sort();
 export const TOOLKITS: Readonly<Record<ToolkitId, readonly string[]>> = Object.freeze({
   core: ['time_resolve', 'reminder_create', 'reminder_list', 'reminder_manage', 'memory_save', 'memory_search', 'memory_forget', 'todo_manage', 'offer_choices', 'react', 'use_toolkit'],
   web: ['web_search', 'web_fetch', 'weather_get', 'fx_convert', 'share_place', 'location_request'],
-  calendar: prefixed('calendar_'),
+  calendar: [...prefixed('calendar_'), 'integration_connect'], // s07 B2: connect offer when not connected
   email: [...prefixed('gmail_'), 'integration_connect'],
   missions: [...prefixed('mission_'), 'task_wait', ...prefixed('watcher_')],
   secretary: prefixed('business_'),
   files: ['make_file'],
-  account: ['settings_update', 'ledger_query', 'integration_connect', 'revise_pending_action'],
+  account: ['settings_update', 'ledger_query', 'integration_connect', 'revise_pending_action', 'group_invite_link'],
+  // s07 (spec 07 A2): browse_task for the chat run; browser_* are surface 'mission' only (Sentinel S02 refuses them elsewhere)
+  browser: ['browse_task', ...prefixed('browser_')],
 });
 
 /** One line per loadable toolkit (use_toolkit's `name` field description). */
@@ -24,7 +26,8 @@ export const TOOLKIT_LINES: Readonly<Record<Exclude<ToolkitId, 'core'>, string>>
   missions: 'background missions, waiting on approvals, page/inbox watchers',
   secretary: 'Telegram Business chats: list, read, draft replies',
   files: 'make a file (csv, md, txt, json, chart png)',
-  account: 'settings, activity ledger, connect integrations, revise a pending approval',
+  account: 'settings, activity ledger, connect integrations, revise a pending approval, group link',
+  browser: 'act on a website in a browser (forms, bookings)',
 });
 
 /** Toolkits containing a tool (a tool may belong to several, e.g. integration_connect). */

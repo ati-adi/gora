@@ -308,7 +308,7 @@ describe('streaming (01 §5.4, §5.5, §5.8, §5.10)', () => {
     } as ToolSpec;
     const webSearch = tool('web_search', () => 'results');
     const specs = [useToolkit, webSearch, ...TOOLS];
-    const kits: Record<ToolkitId, string[]> = { core: ['use_toolkit'], web: ['web_search', 'weather_get'], calendar: [], email: [], missions: [], secretary: [], files: [], account: [] };
+    const kits: Record<ToolkitId, string[]> = { core: ['use_toolkit'], web: ['web_search', 'weather_get'], calendar: [], email: [], missions: [], secretary: [], files: [], account: [], browser: [] };
     const registry = (): ToolRegistry => {
       const base = createStaticRegistry(specs);
       return {

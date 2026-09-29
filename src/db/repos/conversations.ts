@@ -183,6 +183,21 @@ export function createConversationsRepo(x: RepoCtx): ConversationsRepo {
       params.push(o?.limit ?? 50);
       return db.prepare(sql).all<Raw>(...params).map(toConversation);
     },
+    listByChat(tgChatId, o) {
+      const params: SqlValue[] = [tgChatId];
+      let sql = 'SELECT * FROM conversations WHERE tg_chat_id = ?';
+      if (o?.kind) {
+        sql += ' AND kind = ?';
+        params.push(o.kind);
+      }
+      if (o?.status) {
+        sql += ' AND status = ?';
+        params.push(o.status);
+      }
+      sql += ' ORDER BY last_activity_at DESC, id DESC LIMIT ?';
+      params.push(o?.limit ?? 200);
+      return db.prepare(sql).all<Raw>(...params).map(toConversation);
+    },
   };
   return repo;
 }

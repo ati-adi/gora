@@ -37,6 +37,8 @@ export const GROUP_COMMANDS: readonly Cmd[] = Object.freeze([
   { command: 'forget', en: 'Forget from group memory', ru: 'Забыть из памяти группы' },
   { command: 'groupmemory', en: 'Show group memory', ru: 'Память группы' },
   { command: 'me', en: 'Ask privately — answered in our DM', ru: 'Спросить лично — отвечу в личке', is_ephemeral: true },
+  // spec 07 C5 (GR): a private catch-up (ephemeral reply where Telegram supports it, else the DM)
+  { command: 'catchup', en: 'What did I miss?', ru: 'Что я пропустил?', is_ephemeral: true },
 ]);
 
 function defs(publicUrl: string) {

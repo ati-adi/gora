@@ -39,9 +39,9 @@ export function betasFor(f: Pick<Features, 'serverCompaction' | 'clearAt' | 'cac
 
 /** 01 §13 (tunable). */
 export const PLANS: Readonly<Record<PlanId, PlanLimits>> = Object.freeze({
-  free: { priceXtr: 0, turnsPerDay: 40, webSearchesPerDay: 15, sttSecondsPerDay: 1200, filesPerDay: 3, guestAnswersPerDay: 20, activeMissions: 1, watchers: 3, watcherMinIntervalMin: 360, missionBudgetMicros: 500_000, dailyCostCapMicros: 1_500_000, nudgeBudgetMax: 5 },
-  plus: { priceXtr: 500, turnsPerDay: 200, webSearchesPerDay: 60, sttSecondsPerDay: 3600, filesPerDay: 15, guestAnswersPerDay: 100, activeMissions: 5, watchers: 15, watcherMinIntervalMin: 60, missionBudgetMicros: 3_000_000, dailyCostCapMicros: 8_000_000, nudgeBudgetMax: 10 },
-  pro: { priceXtr: 1500, turnsPerDay: 600, webSearchesPerDay: 200, sttSecondsPerDay: 10800, filesPerDay: 50, guestAnswersPerDay: 300, activeMissions: 20, watchers: 50, watcherMinIntervalMin: 30, missionBudgetMicros: 10_000_000, dailyCostCapMicros: 25_000_000, nudgeBudgetMax: 10 },
+  free: { priceXtr: 0, turnsPerDay: 40, webSearchesPerDay: 15, sttSecondsPerDay: 1200, filesPerDay: 3, guestAnswersPerDay: 20, activeMissions: 1, watchers: 3, watcherMinIntervalMin: 360, missionBudgetMicros: 500_000, dailyCostCapMicros: 1_500_000, nudgeBudgetMax: 5, browserTasksPerDay: 3 },
+  plus: { priceXtr: 500, turnsPerDay: 200, webSearchesPerDay: 60, sttSecondsPerDay: 3600, filesPerDay: 15, guestAnswersPerDay: 100, activeMissions: 5, watchers: 15, watcherMinIntervalMin: 60, missionBudgetMicros: 3_000_000, dailyCostCapMicros: 8_000_000, nudgeBudgetMax: 10, browserTasksPerDay: 15 },
+  pro: { priceXtr: 1500, turnsPerDay: 600, webSearchesPerDay: 200, sttSecondsPerDay: 10800, filesPerDay: 50, guestAnswersPerDay: 300, activeMissions: 20, watchers: 50, watcherMinIntervalMin: 30, missionBudgetMicros: 10_000_000, dailyCostCapMicros: 25_000_000, nudgeBudgetMax: 10, browserTasksPerDay: 50 },
 });
 
 /** 01 §6 BLOCKED_DOMAINS (web_search/web_fetch blocked_domains; Groq open() precheck, 03 R4). */
@@ -150,6 +150,40 @@ export const LIMITS = Object.freeze({
   proactivePriorCap: 10, // C4 hierarchical prior pseudo-counts
   proactiveReplyWindowMs: 24 * 3_600_000, // C4 reward window
   proactiveStopPenalty: 5, // C4 β += 5 on "stop"
+  // s07 §A browser agent
+  browserMaxSteps: 40, // A4 per task
+  browserMaxWallMs: 15 * 60_000, // A4, then park offering to continue
+  browserMaxConcurrentPerUser: 1, // A4
+  browserSnapshotMaxTokensSmall: 1_800, // A3 on groq-free
+  browserSnapshotMaxTokensLarge: 6_000, // A3 on larger profiles
+  browserVisionEverySteps: 5, // A3 ≤ 1 vision describe per 5 steps
+  browserActionTimeoutMs: 5_000,
+  browserNavigationTimeoutMs: 20_000,
+  browserSweepEveryMs: 60_000,
+  browserViewport: { width: 1280, height: 800 } as const,
+  browserTaskRetentionDays: 30,
+  // s07 §B Composio
+  integrationPollEveryMs: 5_000, // B1
+  integrationPollForMs: 10 * 60_000, // B1
+  // s07 §C groups
+  groupMessageRetentionDays: 14, // C3
+  groupLeftGraceMs: 7 * 86_400_000, // C3 (as 01)
+  groupSummaryEveryMessages: 40, // C3
+  groupSummaryIdleMs: 10 * 60_000, // C3
+  groupLullMs: 45_000, // C4 a burst ends after a 45 s lull
+  groupUnansweredQuestionMs: 2 * 60_000, // C4 open question unanswered ≥ 2 min
+  groupRewardWindowMs: 10 * 60_000, // C4
+  groupChimeMinGapMs: 30 * 60_000, // C4 ≤ 1 unprompted message per 30 min
+  groupChimeMaxPerDay: 6, // C4
+  groupNightStart: '22:00', // C4 never at night in the group's tz
+  groupNightEnd: '09:00',
+  groupWindowMaxMessages: 30, // C4 heuristic/judge window
+  groupJudgeValueMaxChars: 100, // C4
+  groupChimeMaxSentences: 2, // C4
+  groupContextMaxTokens: 600, // recent messages + summary in an addressed reply's <group> context
+  groupMessageMaxChars: 4_000, // stored text cap per message
+  groupPriorAlpha: 1, // C4 conservative population prior Beta(1, 3)
+  groupPriorBeta: 3,
 });
 
 /** 03 R2 provider profiles (model names are defaults; resolveProfile applies env overrides). */
@@ -246,6 +280,19 @@ const EnvSchema = z.object({
 
   INTEGRATIONS_PROVIDER: z.preprocess(emptyToUndef, z.enum(['fake', 'composio', 'none']).default('fake')),
   COMPOSIO_API_KEY: optStr,
+  /** Spec 07 B4: explicit Composio auth config ids (ac_…) when the Composio-managed ones must be pinned. */
+  COMPOSIO_AUTH_CONFIG_GCAL: optStr,
+  COMPOSIO_AUTH_CONFIG_GMAIL: optStr,
+  /** Spec 07 A1: 'playwright' (headless Chromium, `npx playwright install chromium`), 'none'. Forced to 'none' under test (tests inject FakeBrowser). */
+  BROWSER_PROVIDER: z.preprocess(emptyToUndef, z.enum(['playwright', 'none']).default('playwright')),
+  BROWSER_HEADLESS: bool(true),
+  /** Chromium's OS sandbox (default on). Turn off only inside a container that cannot provide it (then isolate the container). */
+  BROWSER_SANDBOX: bool(true),
+  /** Optional Chromium/Chrome executable (default: Playwright's cache). */
+  BROWSER_EXECUTABLE_PATH: optStr,
+  FEATURE_BROWSER: bool(true),
+  /** Spec 07 §C: read the whole group (privacy mode OFF) and chime in; false = the 01 F14 mention-only behaviour. */
+  FEATURE_GROUP_PARTICIPANT: bool(true),
   /** 'auto' (default): groq when GROQ_API_KEY is set, else openai when OPENAI_API_KEY is set, else none (02 §A). */
   STT_PROVIDER: z.preprocess(emptyToUndef, z.enum(['auto', 'fake', 'groq', 'openai', 'none']).default('auto')),
   STT_MODEL: optStr,
@@ -271,6 +318,10 @@ export interface Features {
   business: boolean; businessRich: boolean; guest: boolean; groups: boolean; missions: boolean; makeFile: boolean;
   /** 03 R4 (WP0 addition): global kill switch for TTS voice replies (users still opt in with /voice). */
   voiceReplies: boolean;
+  /** s07 §A: browse_task / the browser toolkit. */
+  browser: boolean;
+  /** s07 §C: group participant mode (reads every message when privacy mode is OFF; chime-ins). */
+  groupParticipant: boolean;
 }
 export type Env3 = 'development' | 'test' | 'production';
 export interface Config {
@@ -292,11 +343,15 @@ export interface Config {
   llm: { requested: 'auto' | 'groq' | 'anthropic'; transport: 'anthropic' | 'groq' | 'demo' };
   profile: ProviderProfile;
   features: Features;
-  providers: { integrations: 'fake' | 'composio' | 'none'; stt: 'fake' | 'groq' | 'openai' | 'none'; sttModel: string; weather: 'fake' | 'openmeteo' | 'metno'; fx: 'fake' | 'erapi'; geo: 'fake' | 'live'; /** spec 05 B2 */ embeddings: 'local' | 'fake' | 'none' };
+  providers: { integrations: 'fake' | 'composio' | 'none'; stt: 'fake' | 'groq' | 'openai' | 'none'; sttModel: string; weather: 'fake' | 'openmeteo' | 'metno'; fx: 'fake' | 'erapi'; geo: 'fake' | 'live'; /** spec 05 B2 */ embeddings: 'local' | 'fake' | 'none'; /** spec 07 A1 */ browser: 'playwright' | 'none' };
   /** Spec 05 B2: the local embedding model and its cache directory (never inside the repo's ./data in tests). */
   embeddings: { model: string; dtype: 'q8'; cacheDir: string };
   /** Spec 05 C4. */
   proactive: { tau: number };
+  /** Spec 07 A1. */
+  browser: { headless: boolean; sandbox: boolean; executablePath?: string };
+  /** Spec 07 B4: pinned auth config ids per integration (else the first enabled Composio-managed one, created if missing). */
+  composio: { authConfigs: { gcal?: string; gmail?: string } };
   keys: { composio?: string; groq?: string; openai?: string };
   userAgent: string;
   routes: typeof ROUTES;
@@ -469,6 +524,8 @@ export function loadConfig(env: Env = process.env): Config {
     missions: e.FEATURE_MISSIONS,
     makeFile: e.FEATURE_MAKE_FILE,
     voiceReplies: e.FEATURE_VOICE_REPLIES,
+    browser: e.FEATURE_BROWSER,
+    groupParticipant: e.FEATURE_GROUP_PARTICIPANT,
   });
   const cfg: Config = {
     env: e.NODE_ENV,
@@ -517,9 +574,17 @@ export function loadConfig(env: Env = process.env): Config {
       fx: isTest ? 'fake' : e.FX_PROVIDER,
       geo: isTest ? 'fake' : e.GEO_PROVIDER,
       embeddings: isTest ? 'fake' : e.EMBEDDINGS_PROVIDER,
+      browser: isTest ? 'none' : e.BROWSER_PROVIDER,
     },
     embeddings: { model: e.EMBEDDINGS_MODEL, dtype: 'q8', cacheDir: e.EMBEDDINGS_CACHE_DIR ?? join(e.DATA_DIR, 'models') },
     proactive: { tau: e.PROACTIVE_TAU },
+    browser: { headless: e.BROWSER_HEADLESS, sandbox: e.BROWSER_SANDBOX, ...(e.BROWSER_EXECUTABLE_PATH ? { executablePath: e.BROWSER_EXECUTABLE_PATH } : {}) },
+    composio: {
+      authConfigs: {
+        ...(e.COMPOSIO_AUTH_CONFIG_GCAL ? { gcal: e.COMPOSIO_AUTH_CONFIG_GCAL } : {}),
+        ...(e.COMPOSIO_AUTH_CONFIG_GMAIL ? { gmail: e.COMPOSIO_AUTH_CONFIG_GMAIL } : {}),
+      },
+    },
     keys: {
       ...(e.COMPOSIO_API_KEY && !isTest ? { composio: e.COMPOSIO_API_KEY } : {}),
       ...(groqKey ? { groq: groqKey } : {}),
@@ -533,6 +598,17 @@ export function loadConfig(env: Env = process.env): Config {
     betas: BETAS,
   };
   return cfg;
+}
+
+/**
+ * s07 (spec 07 B5): non-fatal configuration warnings, logged once at boot by app.ts. Never includes secret values.
+ *  - a Composio key that is not a Platform project key (`ak_…`): a consumer key (`ck_…`) is rejected with 401 code 801.
+ */
+export function configWarnings(cfg: Config): string[] {
+  const out: string[] = [];
+  if (cfg.providers.integrations === 'composio' && !cfg.keys.composio) out.push('INTEGRATIONS_PROVIDER=composio without COMPOSIO_API_KEY: integrations are disabled');
+  if (cfg.keys.composio && !cfg.keys.composio.startsWith('ak_')) out.push('COMPOSIO_API_KEY does not look like a Platform project key (ak_…); Composio rejects consumer keys (ck_…) with 401 code 801');
+  return out;
 }
 
 /** Test/dev helper: a full Config from an env patch with NODE_ENV=test defaults, then a shallow-deep merge of overrides. */

@@ -201,7 +201,9 @@ export function createMemoryStore(s: Services) {
     const ru = uiLang(lang) === 'ru';
     const date = `${w.day} ${(ru ? MON_RU : MON_EN)[w.month - 1]}`;
     const what: Record<SourceKind, [string, string]> = {
-      user_message: row.createdBy === 'extractor' ? ['from your message', 'из вашего сообщения'] : ['from our chat', 'из нашего чата'],
+      user_message: row.scope.startsWith('grp:') && row.createdBy === 'extractor'
+        ? ['noticed in the group', 'замечено в группе'] // spec 07 C3: the automatic group facts
+        : row.createdBy === 'extractor' ? ['from your message', 'из вашего сообщения'] : ['from our chat', 'из нашего чата'],
       tool_explicit: ['you asked me to remember', 'вы просили запомнить'],
       group_explicit: ['saved in the group', 'сохранено в группе'],
       import: ['imported', 'импорт'],
@@ -289,8 +291,10 @@ export function createMemoryStore(s: Services) {
       if (!u) throw new MemoryDenied('consent');
       if (u.incognitoUntil !== null && u.incognitoUntil > now && u.status !== 'deleting') throw new MemoryDenied('incognito');
       if (!memoryEnabled(u, now)) throw new MemoryDenied('consent');
-    } else if (src.kind !== 'group_explicit' || !explicit) {
-      // §9: group memory is written only through an explicit /remember or memory_save in the group.
+    } else if (!((src.kind === 'group_explicit' && explicit) || (src.kind === 'user_message' && !explicit))) {
+      // §9: group memory is written through an explicit /remember or memory_save in the group — and (spec 07 C3, which
+      // overrides §9's explicit-only rule) the automatic group facts of src/groups/summary.ts: source 'user_message',
+      // explicit false.
       throw new MemoryDenied('consent');
     }
   };
@@ -474,7 +478,7 @@ export function createMemoryStore(s: Services) {
             subjectEnc: subject ? seal(scope, gen, 'subject_enc', id, subject) : null, quoteEnc: quote ? seal(scope, gen, 'quote_enc', id, quote) : null, dekGen: gen,
             sensitivity: f.sensitivity, confidence: o.confidence ?? 1, pinned: false, status, sourceKind: f.source.kind,
             sourceConversationId: f.source.conversationId ?? null, sourceInputId: f.source.inputId ?? null, sourceTgMessageId: f.source.tgMessageId ?? null,
-            createdBy: o.createdBy ?? (f.source.kind === 'import' ? 'import' : f.source.kind === 'miniapp' ? 'user' : 'model_tool'), supersedesId: supersedes, now,
+            createdBy: o.createdBy ?? (f.source.kind === 'import' ? 'import' : f.source.kind === 'miniapp' ? 'user' : scope.kind === 'group' && f.source.kind === 'user_message' && !f.explicit ? 'extractor' : 'model_tool'), supersedesId: supersedes, now,
             importance, expiresAt,
           });
           if (supersedes) repo().casStatus(supersedes, 'active', 'superseded', now);
